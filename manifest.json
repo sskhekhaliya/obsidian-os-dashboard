@@ -1,0 +1,11 @@
+{
+  "id": "os-dashboard",
+  "name": "OS Dashboard",
+  "version": "1.0.0",
+  "minAppVersion": "1.5.0",
+  "description": "A sleek personal operating system dashboard for your Obsidian vault with interactive navigation, tasks, clock, quick capture, ongoing projects, and bookmarks.",
+  "author": "SSKhekhaliya",
+  "authorUrl": "https://www.sskhekhaliya.in/",
+  "fundingUrl": "https://buymeacoffee.com/sskhekhaliya",
+  "isDesktopOnly": false
+}

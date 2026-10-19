@@ -1,0 +1,30 @@
+{
+  "name": "obsidian-os-dashboard",
+  "version": "1.0.0",
+  "description": "A sleek personal operating system dashboard for your Obsidian vault with interactive navigation, tasks, clock, quick capture, ongoing projects, and bookmarks.",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "node esbuild.config.mjs production",
+    "check": "tsc --noEmit"
+  },
+  "keywords": [
+    "obsidian",
+    "obsidian-plugin",
+    "dashboard",
+    "home",
+    "tasks",
+    "navigation"
+  ],
+  "author": {
+    "name": "SSKhekhaliya",
+    "url": "https://www.sskhekhaliya.in/"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "esbuild": "^0.24.0",
+    "obsidian": "latest",
+    "typescript": "^5.5.4"
+  }
+}

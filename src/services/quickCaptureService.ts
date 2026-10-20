@@ -18,18 +18,8 @@ export class QuickCaptureService {
     const folderPath = settings.quickCaptureFolder || "00 Inbox";
     await this.ensureFolderExists(folderPath);
 
-    let fileName = "";
-    let bodyContent = trimmed;
-
-    // Smart parsing: if user starts with "# Heading", use it as filename
-    const headingMatch = trimmed.match(/^#\s+(.*?)(\n|$)([\s\S]*)$/);
-    if (headingMatch) {
-      fileName = headingMatch[1].trim();
-      bodyContent = headingMatch[3]?.trim() || `# ${fileName}`;
-    } else {
-      const pattern = settings.newFilePattern || "YYYY-MM-DD HH-mm";
-      fileName = moment().format(pattern) || "Untitled";
-    }
+    const pattern = settings.newFilePattern || "YYYY-MM-DD HH-mm";
+    let fileName = moment().format(pattern) || "Quick Note";
 
     // Clean filename of invalid characters
     fileName = fileName.replace(/[\\/:*?"<>|]/g, "-").trim() || "Quick Note";
@@ -42,8 +32,14 @@ export class QuickCaptureService {
     }
 
     try {
-      const createdFile = await this.app.vault.create(targetPath, bodyContent);
-      new Notice(`Quick Captured to ${createdFile.basename}`);
+      const createdFile = await this.app.vault.create(targetPath, trimmed);
+      new Notice(`Quick Captured: ${createdFile.basename}`);
+
+      // Open the newly created file in workspace
+      const leaf = this.app.workspace.getLeaf(false);
+      if (leaf) {
+        await leaf.openFile(createdFile);
+      }
       return true;
     } catch (err) {
       console.error("OS Dashboard: Failed to save quick capture note", err);

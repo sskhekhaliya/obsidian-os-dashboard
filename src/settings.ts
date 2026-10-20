@@ -1,8 +1,12 @@
-import { App, PluginSettingTab, Setting, setIcon } from "obsidian";
+import { App, PluginSettingTab, Setting, setIcon, Notice } from "obsidian";
 import type OSDashboardPlugin from "./main";
-import { CustomWidget } from "./types";
+import { CustomWidget, StreakItem } from "./types";
+import { StreakModal } from "./modals/streakModal";
+import { FreezeStreakModal } from "./modals/freezeStreakModal";
+import { ArchiveOrDeleteStreakModal } from "./modals/archiveOrDeleteStreakModal";
+import { FileSuggest } from "./modals/fileSuggest";
 
-type SettingsTabId = "general" | "navigation" | "widgets" | "tasks-projects" | "bookmarks";
+type SettingsTabId = "general" | "navigation" | "widgets" | "streaks" | "tasks-projects" | "bookmarks";
 
 export class OSDashboardSettingTab extends PluginSettingTab {
   private plugin: OSDashboardPlugin;
@@ -26,6 +30,7 @@ export class OSDashboardSettingTab extends PluginSettingTab {
       { id: "general", label: "General", icon: "settings" },
       { id: "navigation", label: "Navigation", icon: "folder-tree" },
       { id: "widgets", label: "Widgets", icon: "layout-grid" },
+      { id: "streaks", label: "Streaks & Rail", icon: "flame" },
       { id: "tasks-projects", label: "Tasks & Projects", icon: "check-square" },
       { id: "bookmarks", label: "Bookmarks", icon: "bookmark" }
     ];
@@ -55,6 +60,9 @@ export class OSDashboardSettingTab extends PluginSettingTab {
         break;
       case "widgets":
         this.renderWidgetsTab(tabContent);
+        break;
+      case "streaks":
+        this.renderStreaksRailTab(tabContent);
         break;
       case "tasks-projects":
         this.renderTasksProjectsTab(tabContent);
@@ -334,6 +342,83 @@ export class OSDashboardSettingTab extends PluginSettingTab {
           });
       });
 
+    container.createEl("h3", { text: "Right Side Companion Rail Widgets" });
+
+    new Setting(container)
+      .setName("Enable Right Side Rail")
+      .setDesc("Companion rail on the right side containing Calendar, Graph view, Streaks, and Quote.")
+      .addToggle(toggle => {
+        toggle.setValue(this.plugin.settings.showRightRail ?? true)
+          .onChange(async (val) => {
+            this.plugin.settings.showRightRail = val;
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(container)
+      .setName("Calendar Widget")
+      .setDesc("Interactive mini calendar with current date indicator and daily note integration.")
+      .addToggle(toggle => {
+        toggle.setValue(this.plugin.settings.showCalendar ?? true)
+          .onChange(async (val) => {
+            this.plugin.settings.showCalendar = val;
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(container)
+      .setName("Graph View Widget")
+      .setDesc("Interactive node graph view with direct folder navigation.")
+      .addToggle(toggle => {
+        toggle.setValue(this.plugin.settings.showGraphView ?? true)
+          .onChange(async (val) => {
+            this.plugin.settings.showGraphView = val;
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(container)
+      .setName("Streaks Tracker Widget")
+      .setDesc("Habit streaks tracker synced with Daily Tasks and freeze support.")
+      .addToggle(toggle => {
+        toggle.setValue(this.plugin.settings.showStreaks ?? true)
+          .onChange(async (val) => {
+            this.plugin.settings.showStreaks = val;
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(container)
+      .setName("Quote Widget")
+      .setDesc("Inspirational quote card at the bottom of the right rail.")
+      .addToggle(toggle => {
+        toggle.setValue(this.plugin.settings.showRightQuote ?? true)
+          .onChange(async (val) => {
+            this.plugin.settings.showRightQuote = val;
+            await this.plugin.saveSettings();
+          });
+      });
+
+    // Drag-and-drop & Layout Section
+    container.createEl("h3", { text: "Widget Drag & Drop Layout" });
+    new Setting(container)
+      .setName("Reset Widget Order & Positions")
+      .setDesc("Restore all widgets back to their default columns and positions.")
+      .addButton(btn => {
+        btn.setButtonText("Reset Layout")
+          .setWarning()
+          .onClick(async () => {
+            this.plugin.settings.widgetLayout = {
+              col1: ["todayTasks", "weeklyTasks"],
+              col2: ["recentNotes", "quickCapture"],
+              col3: ["ongoingProjects", "bookmarks"],
+              rail: ["calendar", "streaks", "graphView", "rightQuote"]
+            };
+            await this.plugin.saveSettings();
+            new Notice("Widget layout reset to default!");
+          });
+      });
+
     // Custom Widgets Section
     container.createEl("h3", { text: "Custom Dashboard Widgets" });
     const customDesc = container.createEl("p", {
@@ -487,6 +572,10 @@ export class OSDashboardSettingTab extends PluginSettingTab {
       .setName("Daily Tasks File (Plan)")
       .setDesc("Path to the file containing daily planned tasks organized by date headings (e.g. Daily Tasks.md).")
       .addText(text => {
+        new FileSuggest(this.app, text.inputEl, async (file) => {
+          this.plugin.settings.dailyTasksFile = file.path;
+          await this.plugin.saveSettings();
+        });
         text.setPlaceholder("Daily Tasks.md")
           .setValue(this.plugin.settings.dailyTasksFile)
           .onChange(async (val) => {
@@ -499,6 +588,10 @@ export class OSDashboardSettingTab extends PluginSettingTab {
       .setName("Daily Log File (What I Did)")
       .setDesc("Path to the file containing what you actually did today (e.g. Daily Log.md).")
       .addText(text => {
+        new FileSuggest(this.app, text.inputEl, async (file) => {
+          this.plugin.settings.dailyLogFile = file.path;
+          await this.plugin.saveSettings();
+        });
         text.setPlaceholder("Daily Log.md")
           .setValue(this.plugin.settings.dailyLogFile || "")
           .onChange(async (val) => {
@@ -522,10 +615,62 @@ export class OSDashboardSettingTab extends PluginSettingTab {
       .setName("Weekly Tasks File")
       .setDesc("Path to the file containing weekly tasks (e.g. Weekly Tasks.md).")
       .addText(text => {
+        new FileSuggest(this.app, text.inputEl, async (file) => {
+          this.plugin.settings.weeklyTasksFile = file.path;
+          await this.plugin.saveSettings();
+        });
         text.setPlaceholder("Weekly Tasks.md")
           .setValue(this.plugin.settings.weeklyTasksFile)
           .onChange(async (val) => {
             this.plugin.settings.weeklyTasksFile = val.trim();
+            await this.plugin.saveSettings();
+          });
+      });
+
+    container.createEl("h3", { text: "Habits & Streaks" });
+
+    new Setting(container)
+      .setName("Habits File")
+      .setDesc("Path to the markdown file storing your active habit streaks and callouts (e.g. Habits.md).")
+      .addText(text => {
+        new FileSuggest(this.app, text.inputEl, async (file) => {
+          this.plugin.settings.habitsFile = file.path;
+          await this.plugin.saveSettings();
+        });
+        text.setPlaceholder("Habits.md")
+          .setValue(this.plugin.settings.habitsFile || "Habits.md")
+          .onChange(async (val) => {
+            this.plugin.settings.habitsFile = val.trim() || "Habits.md";
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(container)
+      .setName("Habits Archive File")
+      .setDesc("Path to the markdown file where archived habits are moved (e.g. 99 Archive/Habit.md). Created automatically if needed.")
+      .addText(text => {
+        new FileSuggest(this.app, text.inputEl, async (file) => {
+          this.plugin.settings.archiveHabitsFile = file.path;
+          await this.plugin.saveSettings();
+        });
+        text.setPlaceholder("99 Archive/Habit.md")
+          .setValue(this.plugin.settings.archiveHabitsFile || "99 Archive/Habit.md")
+          .onChange(async (val) => {
+            this.plugin.settings.archiveHabitsFile = val.trim() || "99 Archive/Habit.md";
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(container)
+      .setName("Monthly Freeze Quota (Days)")
+      .setDesc("Maximum number of freeze days a habit can use per calendar month.")
+      .addText(text => {
+        text.inputEl.type = "number";
+        text.setPlaceholder("4")
+          .setValue(String(this.plugin.settings.maxFreezesPerMonth ?? 4))
+          .onChange(async (val) => {
+            const n = parseInt(val, 10);
+            this.plugin.settings.maxFreezesPerMonth = isNaN(n) ? 4 : Math.max(0, n);
             await this.plugin.saveSettings();
           });
       });
@@ -688,6 +833,329 @@ export class OSDashboardSettingTab extends PluginSettingTab {
             });
             await this.plugin.saveSettings();
             this.renderLinksSettings(container);
+          });
+      });
+  }
+
+  // =========================================================================
+  // 6. STREAKS & RIGHT RAIL TAB
+  // =========================================================================
+  private renderStreaksRailTab(container: HTMLElement): void {
+    container.createEl("h3", { text: "Right Side Companion Rail Widgets" });
+
+    new Setting(container)
+      .setName("Enable Right Side Rail")
+      .setDesc("Toggle visibility of the right companion rail containing Calendar, Graph view, Streaks, and Quote.")
+      .addToggle(toggle => {
+        toggle.setValue(this.plugin.settings.showRightRail ?? true)
+          .onChange(async (val) => {
+            this.plugin.settings.showRightRail = val;
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(container)
+      .setName("Calendar Widget")
+      .setDesc("Interactive monthly calendar with quick jump to daily notes.")
+      .addToggle(toggle => {
+        toggle.setValue(this.plugin.settings.showCalendar ?? true)
+          .onChange(async (val) => {
+            this.plugin.settings.showCalendar = val;
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(container)
+      .setName("Graph View Widget")
+      .setDesc("Vault node graph widget with direct link navigation.")
+      .addToggle(toggle => {
+        toggle.setValue(this.plugin.settings.showGraphView ?? true)
+          .onChange(async (val) => {
+            this.plugin.settings.showGraphView = val;
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(container)
+      .setName("Streaks Tracker Widget")
+      .setDesc("Habit streak counter synced with Daily Tasks and freeze protection.")
+      .addToggle(toggle => {
+        toggle.setValue(this.plugin.settings.showStreaks ?? true)
+          .onChange(async (val) => {
+            this.plugin.settings.showStreaks = val;
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(container)
+      .setName("Quote Widget")
+      .setDesc("Motivational quote card at the bottom of the right rail.")
+      .addToggle(toggle => {
+        toggle.setValue(this.plugin.settings.showRightQuote ?? true)
+          .onChange(async (val) => {
+            this.plugin.settings.showRightQuote = val;
+            await this.plugin.saveSettings();
+          });
+      });
+
+    // =======================================================================
+    // Calendar Events File (.md) Section
+    // =======================================================================
+    container.createEl("h3", { text: "Calendar Events File (.md)" });
+    new Setting(container)
+      .setName("Events File")
+      .setDesc("Path to the Markdown file where local events are stored (e.g. Events.md). Uses the same date-heading format as Daily Tasks (## YYYY-MM-DD).")
+      .addText(text => {
+        new FileSuggest(this.app, text.inputEl, async (file) => {
+          this.plugin.settings.calendarEventsFile = file.path;
+          await this.plugin.saveSettings();
+        });
+        text.setPlaceholder("Events.md")
+          .setValue(this.plugin.settings.calendarEventsFile || "Events.md")
+          .onChange(async (val) => {
+            this.plugin.settings.calendarEventsFile = val.trim() || "Events.md";
+            await this.plugin.saveSettings();
+          });
+      });
+
+    // =======================================================================
+    // Google Calendar Integration Section
+    // =======================================================================
+    container.createEl("h3", { text: "Google Calendar Integration" });
+    const calDesc = container.createEl("p", {
+      cls: "setting-item-description",
+      text: "Display real-time events on your Calendar widget with colored event chips and event notifications."
+    });
+    calDesc.style.marginBottom = "14px";
+
+    new Setting(container)
+      .setName("Google Calendar Address (Private iCal URL)")
+      .setDesc("In Google Calendar on the Web, go to Settings > Your Calendar > 'Secret address in iCal format' and paste the URL here.")
+      .addText(text => {
+        text.setPlaceholder("https://calendar.google.com/calendar/ical/.../basic.ics")
+          .setValue(this.plugin.settings.googleCalendarUrl || "")
+          .onChange(async (val) => {
+            this.plugin.settings.googleCalendarUrl = val.trim();
+            await this.plugin.saveSettings();
+          });
+        text.inputEl.style.width = "260px";
+      })
+      .addButton(btn => {
+        btn.setButtonText("Sync Events Now")
+          .setCta()
+          .onClick(async () => {
+            const url = this.plugin.settings.googleCalendarUrl;
+            if (!url) {
+              new Notice("Please enter a Google Calendar iCal address first.");
+              return;
+            }
+            btn.setButtonText("Syncing...");
+            btn.setDisabled(true);
+            try {
+              const events = await this.plugin.calendarService.fetchEvents(url);
+              this.plugin.settings.cachedCalendarEvents = events;
+              this.plugin.settings.lastCalendarSyncTime = Date.now();
+              await this.plugin.saveSettings();
+              new Notice(`✅ Synced ${events.length} Google Calendar event${events.length === 1 ? "" : "s"}!`);
+            } catch (err: any) {
+              new Notice(`❌ Failed to sync: ${err.message || "Invalid iCal URL or network error"}`);
+            } finally {
+              btn.setButtonText("Sync Events Now");
+              btn.setDisabled(false);
+            }
+          });
+      });
+
+    new Setting(container)
+      .setName("Auto-sync Events in Background")
+      .setDesc("Automatically refresh events from Google Calendar every few minutes.")
+      .addToggle(toggle => {
+        toggle.setValue(this.plugin.settings.googleCalendarAutoSync ?? true)
+          .onChange(async (val) => {
+            this.plugin.settings.googleCalendarAutoSync = val;
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(container)
+      .setName("Event Reminders & Notifications")
+      .setDesc("Trigger an in-app notice and desktop notification before an event begins.")
+      .addToggle(toggle => {
+        toggle.setValue(this.plugin.settings.enableCalendarNotifications ?? true)
+          .onChange(async (val) => {
+            this.plugin.settings.enableCalendarNotifications = val;
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(container)
+      .setName("Notification Lead Time")
+      .setDesc("How many minutes before an event starts to notify you.")
+      .addDropdown(dd => {
+        dd.addOption("5", "5 minutes before")
+          .addOption("10", "10 minutes before (Default)")
+          .addOption("15", "15 minutes before")
+          .addOption("30", "30 minutes before")
+          .setValue(String(this.plugin.settings.calendarNotificationLeadMinutes || 10))
+          .onChange(async (val) => {
+            this.plugin.settings.calendarNotificationLeadMinutes = parseInt(val, 10) || 10;
+            await this.plugin.saveSettings();
+          });
+      });
+
+    container.createEl("h3", { text: "Right Rail Quote Content" });
+
+    new Setting(container)
+      .setName("Quote Text")
+      .setDesc("Inspirational quote displayed in the right rail widget.")
+      .addTextArea(text => {
+        text.setPlaceholder("Consistency is more important than intensity.")
+          .setValue(this.plugin.settings.rightRailQuote)
+          .onChange(async (val) => {
+            this.plugin.settings.rightRailQuote = val;
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(container)
+      .setName("Quote Author (Optional)")
+      .setDesc("Author name or source.")
+      .addText(text => {
+        text.setPlaceholder("e.g. Bruce Lee")
+          .setValue(this.plugin.settings.rightRailQuoteAuthor || "")
+          .onChange(async (val) => {
+            this.plugin.settings.rightRailQuoteAuthor = val;
+            await this.plugin.saveSettings();
+          });
+      });
+
+    container.createEl("h3", { text: "Habit Streaks Management" });
+    const streaksDesc = container.createEl("p", {
+      cls: "setting-item-description",
+      text: "Streaks automatically populate into your Daily Tasks.md under today's date (unless frozen). Checking them off in your daily tasks increments the streak. You can also freeze a streak for a few days to preserve your count while taking a break or vacation."
+    });
+    streaksDesc.style.marginBottom = "14px";
+
+    const streaksListContainer = container.createDiv({ cls: "os-settings-streaks-list" });
+    this.renderStreaksList(streaksListContainer);
+  }
+
+  private async renderStreaksList(container: HTMLElement): Promise<void> {
+    container.empty();
+
+    const habitsFilePath = this.plugin.settings.habitsFile || "Habits.md";
+    const archiveFilePath = this.plugin.settings.archiveHabitsFile || "99 Archive/Habit.md";
+    const maxFreezes = this.plugin.settings.maxFreezesPerMonth || 4;
+
+    const streaks = await this.plugin.streakService.loadHabits(habitsFilePath, this.plugin.settings.streaks || []);
+    this.plugin.settings.streaks = streaks;
+
+    streaks.forEach((streak) => {
+      const streakCard = container.createDiv({ cls: "os-settings-streak-card" });
+      streakCard.style.cssText = "display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; margin-bottom: 8px; border-radius: 8px; background: var(--background-secondary); border: 1px solid var(--background-modifier-border);";
+
+      const leftCol = streakCard.createDiv({ cls: "os-settings-streak-info" });
+      leftCol.style.cssText = "display: flex; align-items: center; gap: 10px;";
+
+      const iconSpan = leftCol.createSpan();
+      setIcon(iconSpan, streak.icon || "flame");
+      iconSpan.style.cssText = "color: var(--text-accent); display: flex; align-items: center;";
+
+      const titleWrapper = leftCol.createDiv();
+      titleWrapper.style.cssText = "display: flex; flex-direction: column; gap: 2px;";
+      const titleSpan = titleWrapper.createSpan({ text: streak.name });
+      titleSpan.style.fontWeight = "600";
+      if (streak.description) {
+        const descSpan = titleWrapper.createSpan({ text: streak.description });
+        descSpan.style.cssText = "font-size: 11px; color: var(--text-muted); font-weight: 400;";
+      }
+
+      const freq = streak.frequency || "daily";
+      const streakUnit = freq === "weekly"
+        ? (streak.currentStreak === 1 ? "wk" : "wks")
+        : freq === "monthly"
+        ? (streak.currentStreak === 1 ? "mo" : "mos")
+        : freq === "yearly"
+        ? (streak.currentStreak === 1 ? "yr" : "yrs")
+        : (streak.currentStreak === 1 ? "day" : "days");
+      const habitMaxFreezes = this.plugin.streakService.getEffectiveMaxFreezes(streak, maxFreezes);
+
+      const freqText = freq.charAt(0).toUpperCase() + freq.slice(1) + (freq !== "daily" && streak.scheduleType === "fixed" ? " (Fixed)" : "");
+      const freqBadge = leftCol.createSpan({ text: freqText });
+      freqBadge.style.cssText = "font-size: 10px; padding: 1px 6px; border-radius: 4px; background: var(--background-modifier-border); color: var(--text-muted); font-weight: 500; text-transform: uppercase;";
+
+      const countBadge = leftCol.createSpan({ text: `${streak.currentStreak || 0} ${streakUnit}` });
+      countBadge.style.cssText = "font-size: 11px; padding: 2px 8px; border-radius: 10px; background: rgba(255, 152, 0, 0.15); color: #ffa726; font-weight: 600;";
+
+      const isFrozen = this.plugin.streakService.isFrozen(streak);
+      if (isFrozen) {
+        const daysLeft = this.plugin.streakService.getFreezeDaysLeft(streak);
+        const freezeBadge = leftCol.createSpan({ text: `❄️ Frozen (${daysLeft}d left)` });
+        freezeBadge.style.cssText = "font-size: 11px; padding: 2px 8px; border-radius: 10px; background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-weight: 600;";
+      }
+
+      const actions = streakCard.createDiv({ cls: "os-settings-streak-actions" });
+      actions.style.cssText = "display: flex; align-items: center; gap: 6px;";
+
+      // Freeze button
+      const freezeBtn = actions.createEl("button", { text: isFrozen ? "Unfreeze" : "Freeze", cls: "mod-warning" });
+      freezeBtn.addEventListener("click", () => {
+        new FreezeStreakModal(this.app, streak, this.plugin.streakService, habitMaxFreezes, async () => {
+          await this.plugin.streakService.saveHabits(habitsFilePath, streaks, maxFreezes);
+          await this.plugin.saveSettings();
+          await this.renderStreaksList(container);
+        }).open();
+      });
+
+      // Edit button (name & description)
+      const editBtn = actions.createEl("button", { text: "Edit" });
+      editBtn.addEventListener("click", () => {
+        new StreakModal(this.app, streak, async (updated) => {
+          await this.plugin.streakService.updateHabitDetails(
+            habitsFilePath,
+            streak.id,
+            updated.name,
+            updated.description,
+            this.plugin.settings
+          );
+          await this.plugin.saveSettings();
+          await this.renderStreaksList(container);
+        }).open();
+      });
+
+      // Archive / Delete button
+      const deleteBtn = actions.createEl("button", { text: "Manage", cls: "mod-destructive" });
+      deleteBtn.addEventListener("click", () => {
+        new ArchiveOrDeleteStreakModal(
+          this.app,
+          streak,
+          archiveFilePath,
+          async () => {
+            await this.plugin.streakService.archiveHabit(habitsFilePath, archiveFilePath, streak.id, this.plugin.settings);
+            await this.plugin.saveSettings();
+            await this.renderStreaksList(container);
+          },
+          async () => {
+            await this.plugin.streakService.deleteHabit(habitsFilePath, streak.id, this.plugin.settings);
+            await this.plugin.saveSettings();
+            await this.renderStreaksList(container);
+          }
+        ).open();
+      });
+    });
+
+    new Setting(container)
+      .addButton(btn => {
+        btn.setButtonText("+ Add New Habit")
+          .setCta()
+          .onClick(() => {
+            new StreakModal(this.app, null, async (newStreak) => {
+              streaks.push(newStreak);
+              await this.plugin.streakService.saveHabits(habitsFilePath, streaks, maxFreezes);
+              this.plugin.settings.streaks = streaks;
+              await this.plugin.saveSettings();
+              await this.renderStreaksList(container);
+            }).open();
           });
       });
   }

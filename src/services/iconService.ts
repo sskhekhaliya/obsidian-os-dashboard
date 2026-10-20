@@ -144,10 +144,15 @@ export class IconService {
           }
 
           // If it's a Lucide name or generic name
-          const cleanLucide = trimmedIcon.replace(/^(Li|Lucide):/i, "").toLowerCase();
+          let cleanName = trimmedIcon.replace(/^(Li|Lucide|lucide|Lu|Fa|Ri|Tb|Hi):?/i, "");
+          cleanName = cleanName
+            .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+            .replace(/([a-zA-Z])([0-9]+)/g, "$1-$2")
+            .toLowerCase();
+
           return {
             type: "lucide",
-            value: cleanLucide || "folder",
+            value: cleanName || "folder",
             color: finalColor
           };
         }
@@ -230,7 +235,23 @@ export class IconService {
       setIcon(el, "folder");
     }
 
-    const svg = el.querySelector("svg");
+    let svg = el.querySelector("svg");
+    if (!svg && iconInfo.value) {
+      const hyphenated = iconInfo.value.replace(/([a-zA-Z])([0-9]+)/g, "$1-$2");
+      if (hyphenated !== iconInfo.value) {
+        try {
+          setIcon(el, hyphenated);
+          svg = el.querySelector("svg");
+        } catch {}
+      }
+      if (!svg) {
+        try {
+          setIcon(el, "folder");
+          svg = el.querySelector("svg");
+        } catch {}
+      }
+    }
+
     if (svg) {
       svg.style.width = "16px";
       svg.style.height = "16px";
@@ -241,7 +262,10 @@ export class IconService {
   }
 
   private isEmoji(str: string): boolean {
-    return /\p{Extended_Pictographic}/u.test(str) || /\p{Emoji}/u.test(str);
+    if (!str || typeof str !== "string") return false;
+    // Icon names or strings containing ASCII letters are definitely not emojis
+    if (/[a-zA-Z]/.test(str)) return false;
+    return /\p{Extended_Pictographic}/u.test(str);
   }
 
   private getDefaultLucideIcon(folderName: string): string {

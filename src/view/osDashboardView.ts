@@ -40,7 +40,10 @@ export class OSDashboardView extends ItemView {
       this.plugin.quickCaptureService,
       this.plugin.projectService,
       this.plugin.quoteService,
-      this.plugin.iconService
+      this.plugin.iconService,
+      this.plugin.streakService,
+      this.plugin.calendarService,
+      () => this.plugin.saveSettings()
     );
 
     await this.renderer.render(this.contentEl);

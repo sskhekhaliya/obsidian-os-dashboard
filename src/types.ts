@@ -1,8 +1,9 @@
 import { TFile } from "obsidian";
 
-export function moment(...args: any[]): any {
+export const moment: any = (...args: any[]): any => {
   return (window as any).moment(...args);
-}
+};
+moment.utc = (...args: any[]) => (window as any).moment?.utc(...args);
 
 export interface DashboardLink {
   id: string;
@@ -58,8 +59,97 @@ export interface OSDashboardSettings {
   showOngoingProjects: boolean;
   showBookmarks: boolean;
 
+  // Right Rail Widgets
+  showRightRail: boolean;
+  showCalendar: boolean;
+  showGraphView: boolean;
+  showStreaks: boolean;
+  showRightQuote: boolean;
+  rightRailQuote: string;
+  rightRailQuoteAuthor: string;
+  streaks: StreakItem[];
+  habitsFile: string;
+  archiveHabitsFile: string;
+  maxFreezesPerMonth: number;
+
+  // Google Calendar Integration & Local Events
+  googleCalendarUrl: string;
+  googleCalendarAutoSync: boolean;
+  enableCalendarNotifications: boolean;
+  calendarNotificationLeadMinutes: number;
+  cachedCalendarEvents: CalendarEventItem[];
+  localCalendarEvents: CalendarEventItem[];
+  calendarEventsFile: string;
+  lastCalendarSyncTime?: number;
+
   // Custom Widgets
   customWidgets: CustomWidget[];
+
+  // Drag and Drop Widget Layout
+  widgetLayout?: DashboardWidgetLayout;
+}
+
+export interface DashboardWidgetLayout {
+  col1: string[];
+  col2: string[];
+  col3: string[];
+  rail: string[];
+}
+
+export type EventRecurrenceType = "none" | "daily" | "weekly" | "monthly" | "yearly" | "custom_days";
+
+export interface EventRecurrenceRule {
+  type: EventRecurrenceType;
+  intervalDays?: number; // e.g. every after N days
+  intervalWeeks?: number;
+  until?: string; // YYYY-MM-DD
+}
+
+export interface CalendarEventItem {
+  id: string;
+  title: string;
+  startDate: string; // YYYY-MM-DD
+  startTime?: string; // HH:mm
+  endDate: string; // YYYY-MM-DD
+  endTime?: string; // HH:mm
+  isAllDay: boolean;
+  location?: string;
+  description?: string;
+  color?: string;
+  source?: "google" | "local";
+  recurrence?: EventRecurrenceRule;
+  enableNotification?: boolean;
+  notificationLeadMinutes?: number;
+}
+
+export type HabitFrequency = "daily" | "weekly" | "monthly" | "yearly";
+export type HabitScheduleType = "flexible" | "fixed";
+export type HabitFreezePeriod = "weekly" | "monthly" | "yearly";
+
+export interface StreakItem {
+  id: string;
+  name: string;
+  description?: string;
+  icon: string;
+  frequency?: HabitFrequency;
+  scheduleType?: HabitScheduleType;
+  fixedDayOfWeek?: number; // 0 (Sun) - 6 (Sat)
+  fixedDayOfMonth?: number; // 1 - 31
+  fixedDateOfYear?: string; // MM-DD
+  currentStreak: number;
+  bestStreak: number;
+  createdDate?: string;
+  startDate?: string;
+  lastCompletedDate?: string;
+  lastCompletedCycle?: string;
+  history: string[];
+  frozenUntil?: string | null;
+  freezeHistory?: string[];
+  freezePeriodType?: HabitFreezePeriod;
+  freezeQuota?: number;
+  maxFreezesPerMonth?: number;
+  autoPopulate: boolean;
+  journal?: string;
 }
 
 export const DEFAULT_SETTINGS: OSDashboardSettings = {
@@ -77,6 +167,9 @@ export const DEFAULT_SETTINGS: OSDashboardSettings = {
   dailyLogFile: "Daily Log.md",
   autoLogToDailyLog: true,
   weeklyTasksFile: "Weekly Tasks.md",
+  habitsFile: "Habits.md",
+  archiveHabitsFile: "99 Archive/Habit.md",
+  maxFreezesPerMonth: 4,
   quickCaptureFolder: "00 Inbox",
   projectsFolder: "03 Projects",
   projectStatusProp: "status",
@@ -105,7 +198,41 @@ export const DEFAULT_SETTINGS: OSDashboardSettings = {
   showQuickCapture: true,
   showOngoingProjects: true,
   showBookmarks: true,
-  customWidgets: []
+
+  // Right Rail Widgets
+  showRightRail: true,
+  showCalendar: true,
+  showGraphView: true,
+  showStreaks: true,
+  showRightQuote: true,
+  rightRailQuote: "“Consistency is more important than intensity.”",
+  rightRailQuoteAuthor: "",
+  streaks: [],
+
+  // Google Calendar Integration Defaults
+  googleCalendarUrl: "",
+  googleCalendarAutoSync: true,
+  enableCalendarNotifications: true,
+  calendarNotificationLeadMinutes: 10,
+  cachedCalendarEvents: [],
+  localCalendarEvents: [],
+  calendarEventsFile: "Events.md",
+  lastCalendarSyncTime: 0,
+
+  customWidgets: [],
+  widgetLayout: {
+    col1: ["todayTasks", "weeklyTasks"],
+    col2: ["recentNotes", "quickCapture"],
+    col3: ["ongoingProjects", "bookmarks"],
+    rail: ["calendar", "streaks", "graphView", "rightQuote"]
+  }
+};
+
+export const DEFAULT_WIDGET_LAYOUT: DashboardWidgetLayout = {
+  col1: ["todayTasks", "weeklyTasks"],
+  col2: ["recentNotes", "quickCapture"],
+  col3: ["ongoingProjects", "bookmarks"],
+  rail: ["calendar", "streaks", "graphView", "rightQuote"]
 };
 
 export interface TaskItem {

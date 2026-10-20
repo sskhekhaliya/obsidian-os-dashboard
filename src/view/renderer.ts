@@ -1,5 +1,5 @@
-import { App, Component, MarkdownRenderer, setIcon, Notice, TFile, Platform } from "obsidian";
-import { OSDashboardSettings, TaskItem, ProjectItem, FolderCard, RecentNoteItem, DashboardLink, CustomWidget, moment, hexToRgb } from "../types";
+import { App, Component, MarkdownRenderer, setIcon, Notice, TFile, Platform, WorkspaceLeaf, Menu } from "obsidian";
+import { OSDashboardSettings, TaskItem, ProjectItem, FolderCard, RecentNoteItem, DashboardLink, CustomWidget, StreakItem, CalendarEventItem, DashboardWidgetLayout, DEFAULT_WIDGET_LAYOUT, moment, hexToRgb } from "../types";
 import { NavigationService } from "../services/navigationService";
 import { TaskService } from "../services/taskService";
 import { RecentNotesService } from "../services/recentNotesService";
@@ -7,9 +7,17 @@ import { QuickCaptureService } from "../services/quickCaptureService";
 import { ProjectService } from "../services/projectService";
 import { QuoteService } from "../services/quoteService";
 import { IconService } from "../services/iconService";
+import { StreakService } from "../services/streakService";
+import { CalendarService } from "../services/calendarService";
 import { ScheduleTaskModal } from "../modals/scheduleTaskModal";
 import { WikiLinkSuggest } from "../modals/wikiLinkSuggest";
 import { OverdueTasksModal } from "../modals/overdueTasksModal";
+import { FreezeStreakModal } from "../modals/freezeStreakModal";
+import { StreakModal } from "../modals/streakModal";
+import { ArchiveOrDeleteStreakModal } from "../modals/archiveOrDeleteStreakModal";
+import { HabitDetailsModal } from "../modals/habitDetailsModal";
+import { EventModal } from "../modals/eventModal";
+import { QuoteModal } from "../modals/quoteModal";
 
 export class DashboardRenderer extends Component {
   private app: App;
@@ -21,9 +29,21 @@ export class DashboardRenderer extends Component {
   private projectService: ProjectService;
   private quoteService: QuoteService;
   private iconService: IconService;
+  private streakService: StreakService;
+  private calendarService: CalendarService;
+  private onSaveSettings?: () => Promise<void>;
 
+  private rootContainerEl: HTMLElement | null = null;
   private clockInterval: number | null = null;
   private activeTodayTab: "tasks" | "log" | "overdue" = "tasks";
+
+  private calendarDate = moment();
+  private selectedCalendarDate: string = moment().format("YYYY-MM-DD");
+  private calendarViewMode: "month" | "agenda" = "month";
+  private calendarCardEl: HTMLElement | null = null;
+  private streaksCardEl: HTMLElement | null = null;
+  private embeddedGraphLeaf: WorkspaceLeaf | null = null;
+  private resizeObserver: ResizeObserver | null = null;
 
   constructor(
     app: App,
@@ -34,7 +54,10 @@ export class DashboardRenderer extends Component {
     quickCaptureService: QuickCaptureService,
     projectService: ProjectService,
     quoteService: QuoteService,
-    iconService: IconService
+    iconService: IconService,
+    streakService?: StreakService,
+    calendarService?: CalendarService,
+    onSaveSettings?: () => Promise<void>
   ) {
     super();
     this.app = app;
@@ -46,6 +69,9 @@ export class DashboardRenderer extends Component {
     this.projectService = projectService;
     this.quoteService = quoteService;
     this.iconService = iconService;
+    this.streakService = streakService || new StreakService(app);
+    this.calendarService = calendarService || new CalendarService(app);
+    this.onSaveSettings = onSaveSettings;
   }
 
   public updateSettings(settings: OSDashboardSettings) {
@@ -57,9 +83,25 @@ export class DashboardRenderer extends Component {
       window.clearInterval(this.clockInterval);
       this.clockInterval = null;
     }
+    if (this.embeddedGraphLeaf) {
+      try {
+        if (this.embeddedGraphLeaf.view) {
+          (this.embeddedGraphLeaf.view as any).saveSettings = () => {};
+          (this.embeddedGraphLeaf.view as any).saveState = () => {};
+          (this.embeddedGraphLeaf.view as any).save = () => {};
+        }
+        this.embeddedGraphLeaf.detach();
+      } catch (e) {}
+      this.embeddedGraphLeaf = null;
+    }
+    if (this.resizeObserver) {
+      this.resizeObserver.disconnect();
+      this.resizeObserver = null;
+    }
   }
 
   public async render(container: HTMLElement): Promise<void> {
+    this.rootContainerEl = container;
     this.destroy();
     container.empty();
     container.addClass("os-dashboard-root");
@@ -114,21 +156,58 @@ export class DashboardRenderer extends Component {
       }
     });
 
-    // 1. Hero Banner Section (full-width edge-to-edge)
-    if (this.settings.showHeroBanner ?? true) {
-      this.renderHero(scrollContainer);
-    }
-
-    // Body container for navigation ribbon and grid
+    // Body container with main content on left and side rail on right
     const bodyEl = scrollContainer.createDiv({ cls: "os-dashboard-body" });
+    const layoutEl = bodyEl.createDiv({ cls: "os-dashboard-layout" });
+
+    // Left Main Area (Hero + Nav + 3-column Grid)
+    const mainEl = layoutEl.createDiv({ cls: "os-dashboard-main" });
+
+    // 1. Hero Banner Section
+    if (this.settings.showHeroBanner ?? true) {
+      this.renderHero(mainEl);
+    }
 
     // 2. Navigation Ribbon (Folders)
     if (this.settings.showNavRibbon ?? true) {
-      await this.renderNavigationRibbon(bodyEl);
+      await this.renderNavigationRibbon(mainEl);
     }
 
-    // 3. Main Dashboard Grid (3 Columns)
-    await this.renderMainGrid(bodyEl);
+    // Resolve Dynamic Drag-and-Drop Layout
+    const layout = this.getResolvedLayout();
+
+    const isMobileView = Platform.isMobile || Platform.isPhone || (container.clientWidth > 0 && container.clientWidth < 850);
+
+    if (isMobileView) {
+      // Mobile: Render row-by-row interleaved widgets across columns and rail
+      await this.renderMobileWidgets(mainEl, layout);
+    } else {
+      // Desktop: Main Dashboard Grid (3 Columns)
+      await this.renderMainGrid(mainEl, layout);
+
+      // Right Rail Sidebar (Calendar, Graph view, Streaks, Quote)
+      if (this.settings.showRightRail ?? true) {
+        const railEl = layoutEl.createDiv({ cls: "os-dashboard-side-rail" });
+        await this.renderColumnWidgets(railEl, layout.rail, "rail");
+      }
+    }
+
+    if (!Platform.isMobile && !Platform.isPhone && typeof ResizeObserver !== "undefined") {
+      let lastWasMobile = isMobileView;
+      this.resizeObserver = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          const w = entry.contentRect.width;
+          if (w > 0) {
+            const nowMobile = w < 850;
+            if (nowMobile !== lastWasMobile) {
+              lastWasMobile = nowMobile;
+              this.render(container);
+            }
+          }
+        }
+      });
+      this.resizeObserver.observe(container);
+    }
   }
 
   private renderHero(container: HTMLElement): void {
@@ -204,13 +283,27 @@ export class DashboardRenderer extends Component {
   }
 
   private async renderNavigationRibbon(container: HTMLElement): Promise<void> {
-    const ribbonEl = container.createDiv({ cls: "os-dashboard-nav-ribbon" });
     const folderCards = this.navigationService.getFolderCards(this.settings);
+    if (folderCards.length === 0) return;
 
-    if (folderCards.length === 0) {
-      ribbonEl.createDiv({ cls: "os-dashboard-empty-hint", text: "No 1st-level folders found." });
-      return;
-    }
+    const wrapper = container.createDiv({ cls: "os-nav-ribbon-wrapper" });
+
+    // Left scroll button
+    const leftBtn = wrapper.createEl("button", {
+      cls: "os-nav-scroll-btn os-nav-scroll-left is-hidden",
+      title: "Scroll left"
+    });
+    setIcon(leftBtn, "chevron-left");
+
+    // Ribbon container
+    const ribbonEl = wrapper.createDiv({ cls: "os-dashboard-nav-ribbon" });
+
+    // Right scroll button
+    const rightBtn = wrapper.createEl("button", {
+      cls: "os-nav-scroll-btn os-nav-scroll-right is-hidden",
+      title: "Scroll right"
+    });
+    setIcon(rightBtn, "chevron-right");
 
     for (const card of folderCards) {
       const cardEl = ribbonEl.createDiv({ cls: "os-dashboard-folder-card" });
@@ -228,51 +321,385 @@ export class DashboardRenderer extends Component {
         await this.navigationService.handleFolderClick(card, this.settings);
       });
     }
+
+    // Scroll actions
+    leftBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      ribbonEl.scrollBy({ left: -240, behavior: "smooth" });
+    });
+
+    rightBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      ribbonEl.scrollBy({ left: 240, behavior: "smooth" });
+    });
+
+    // Dynamically show/hide buttons based on scroll position and overflow
+    const updateNavButtons = () => {
+      const { scrollLeft, scrollWidth, clientWidth } = ribbonEl;
+      const canScroll = scrollWidth > clientWidth + 2;
+
+      if (!canScroll) {
+        leftBtn.addClass("is-hidden");
+        rightBtn.addClass("is-hidden");
+        return;
+      }
+
+      if (scrollLeft > 4) {
+        leftBtn.removeClass("is-hidden");
+      } else {
+        leftBtn.addClass("is-hidden");
+      }
+
+      if (scrollLeft + clientWidth < scrollWidth - 4) {
+        rightBtn.removeClass("is-hidden");
+      } else {
+        rightBtn.addClass("is-hidden");
+      }
+    };
+
+    ribbonEl.addEventListener("scroll", updateNavButtons, { passive: true });
+
+    window.requestAnimationFrame(() => {
+      updateNavButtons();
+    });
+
+    if (typeof ResizeObserver !== "undefined") {
+      const ro = new ResizeObserver(() => updateNavButtons());
+      ro.observe(ribbonEl);
+      this.register(() => ro.disconnect());
+    }
   }
 
-  private async renderMainGrid(container: HTMLElement): Promise<void> {
+  private async renderMainGrid(container: HTMLElement, layout: DashboardWidgetLayout): Promise<void> {
     const gridEl = container.createDiv({ cls: "os-dashboard-grid" });
 
-    // Column 1: Today, Weekly Tasks, & Custom Col 1 Widgets
+    // Column 1
     const col1 = gridEl.createDiv({ cls: "os-dashboard-col" });
-    if (this.settings.showTodayTasks ?? true) {
-      await this.renderTodayTasks(col1);
-    }
-    if (this.settings.showWeeklyTasks ?? true) {
-      await this.renderWeeklyTasks(col1);
-    }
-    await this.renderCustomWidgetsForColumn(col1, 1);
+    await this.renderColumnWidgets(col1, layout.col1, "col1");
 
-    // Column 2: Recent Notes, Quick Capture, & Custom Col 2 Widgets
+    // Column 2
     const col2 = gridEl.createDiv({ cls: "os-dashboard-col" });
-    if (this.settings.showRecentNotes ?? true) {
-      await this.renderRecentNotes(col2);
-    }
-    if (this.settings.showQuickCapture ?? true) {
-      this.renderQuickCapture(col2);
-    }
-    await this.renderCustomWidgetsForColumn(col2, 2);
+    await this.renderColumnWidgets(col2, layout.col2, "col2");
 
-    // Column 3: Ongoing Projects, Links, & Custom Col 3 Widgets
+    // Column 3
     const col3 = gridEl.createDiv({ cls: "os-dashboard-col" });
-    if (this.settings.showOngoingProjects ?? true) {
-      await this.renderOngoingProjects(col3);
-    }
-    if (this.settings.showBookmarks ?? true) {
-      this.renderLinksWidget(col3);
-    }
-    await this.renderCustomWidgetsForColumn(col3, 3);
+    await this.renderColumnWidgets(col3, layout.col3, "col3");
+  }
 
-    // Clean up empty column containers so layout dynamically reflows
-    if (col1.childElementCount === 0) col1.remove();
-    if (col2.childElementCount === 0) col2.remove();
-    if (col3.childElementCount === 0) col3.remove();
+  private getInterleavedWidgetList(layout: DashboardWidgetLayout): Array<{ widgetId: string; colName: string }> {
+    const result: Array<{ widgetId: string; colName: string }> = [];
+    const col1 = layout.col1 || [];
+    const col2 = layout.col2 || [];
+    const col3 = layout.col3 || [];
+    const rail = (this.settings.showRightRail ?? true) ? (layout.rail || []) : [];
 
-    if (gridEl.childElementCount === 0) {
-      gridEl.createDiv({
-        cls: "os-empty-placeholder",
-        text: "All widgets are currently hidden. Enable widgets in OS Dashboard settings."
+    const maxLen = Math.max(col1.length, col2.length, col3.length, rail.length);
+    for (let r = 0; r < maxLen; r++) {
+      if (col1[r]) result.push({ widgetId: col1[r], colName: "col1" });
+      if (col2[r]) result.push({ widgetId: col2[r], colName: "col2" });
+      if (col3[r]) result.push({ widgetId: col3[r], colName: "col3" });
+      if (rail[r]) result.push({ widgetId: rail[r], colName: "rail" });
+    }
+    return result;
+  }
+
+  private async renderMobileWidgets(container: HTMLElement, layout: DashboardWidgetLayout): Promise<void> {
+    const mobileCol = container.createDiv({ cls: "os-dashboard-col os-dashboard-mobile-col" });
+    const items = this.getInterleavedWidgetList(layout);
+
+    for (const item of items) {
+      const prevCount = mobileCol.childElementCount;
+      await this.renderSingleWidget(mobileCol, item.widgetId);
+      if (mobileCol.childElementCount > prevCount) {
+        const cardEl = mobileCol.lastElementChild as HTMLElement;
+        this.attachDragAndDropToCard(cardEl, item.widgetId, item.colName);
+      }
+    }
+  }
+
+  private getResolvedLayout(): DashboardWidgetLayout {
+    const raw = this.settings.widgetLayout;
+    const defaultCols: DashboardWidgetLayout = {
+      col1: ["todayTasks", "weeklyTasks"],
+      col2: ["recentNotes", "quickCapture"],
+      col3: ["ongoingProjects", "bookmarks"],
+      rail: ["calendar", "streaks", "graphView", "rightQuote"]
+    };
+
+    if (raw && Array.isArray(raw.rail)) {
+      const oldDefaultSeq = ["calendar", "graphView", "streaks", "rightQuote"];
+      if (raw.rail.length === 4 && raw.rail.every((v, i) => v === oldDefaultSeq[i])) {
+        raw.rail = ["calendar", "streaks", "graphView", "rightQuote"];
+      }
+    }
+
+    if (!raw) return defaultCols;
+
+    const col1 = Array.isArray(raw.col1) ? [...raw.col1] : [...defaultCols.col1];
+    const col2 = Array.isArray(raw.col2) ? [...raw.col2] : [...defaultCols.col2];
+    const col3 = Array.isArray(raw.col3) ? [...raw.col3] : [...defaultCols.col3];
+    const rail = Array.isArray(raw.rail) ? [...raw.rail] : [...defaultCols.rail];
+
+    // Collect all placed widget IDs
+    const placed = new Set<string>([...col1, ...col2, ...col3, ...rail]);
+
+    // Ensure built-in widgets are placed if missing
+    for (const id of defaultCols.col1) {
+      if (!placed.has(id)) { col1.push(id); placed.add(id); }
+    }
+    for (const id of defaultCols.col2) {
+      if (!placed.has(id)) { col2.push(id); placed.add(id); }
+    }
+    for (const id of defaultCols.col3) {
+      if (!placed.has(id)) { col3.push(id); placed.add(id); }
+    }
+    for (const id of defaultCols.rail) {
+      if (!placed.has(id)) { rail.push(id); placed.add(id); }
+    }
+
+    // Ensure custom widgets are placed
+    for (const cw of this.settings.customWidgets || []) {
+      const cid = `custom-${cw.id}`;
+      if (!placed.has(cid)) {
+        if (cw.column === 2) col2.push(cid);
+        else if (cw.column === 3) col3.push(cid);
+        else col1.push(cid);
+        placed.add(cid);
+      }
+    }
+
+    return { col1, col2, col3, rail };
+  }
+
+  private async renderColumnWidgets(colEl: HTMLElement, widgetIds: string[], colId: string): Promise<void> {
+    this.setupColumnDropZone(colEl, colId);
+
+    let renderedCount = 0;
+    for (const widgetId of widgetIds) {
+      const prevCount = colEl.childElementCount;
+      await this.renderSingleWidget(colEl, widgetId);
+      if (colEl.childElementCount > prevCount) {
+        const cardEl = colEl.lastElementChild as HTMLElement;
+        this.attachDragAndDropToCard(cardEl, widgetId, colId);
+        renderedCount++;
+      }
+    }
+
+    if (renderedCount === 0) {
+      const emptyZone = colEl.createDiv({ cls: "os-col-empty-zone" });
+      emptyZone.createSpan({ cls: "os-col-empty-text", text: "Drop widget here" });
+    }
+  }
+
+  private async renderSingleWidget(container: HTMLElement, widgetId: string): Promise<void> {
+    switch (widgetId) {
+      case "todayTasks":
+        if (this.settings.showTodayTasks ?? true) {
+          await this.renderTodayTasks(container);
+        }
+        break;
+      case "weeklyTasks":
+        if (this.settings.showWeeklyTasks ?? true) {
+          await this.renderWeeklyTasks(container);
+        }
+        break;
+      case "recentNotes":
+        if (this.settings.showRecentNotes ?? true) {
+          await this.renderRecentNotes(container);
+        }
+        break;
+      case "quickCapture":
+        if (this.settings.showQuickCapture ?? true) {
+          this.renderQuickCapture(container);
+        }
+        break;
+      case "ongoingProjects":
+        if (this.settings.showOngoingProjects ?? true) {
+          await this.renderOngoingProjects(container);
+        }
+        break;
+      case "bookmarks":
+        if (this.settings.showBookmarks ?? true) {
+          this.renderLinksWidget(container);
+        }
+        break;
+      case "calendar":
+        if (this.settings.showCalendar ?? true) {
+          await this.renderCalendarWidget(container);
+        }
+        break;
+      case "graphView":
+        if (this.settings.showGraphView ?? true) {
+          await this.renderGraphWidget(container);
+        }
+        break;
+      case "streaks":
+        if (this.settings.showStreaks ?? true) {
+          await this.renderStreaksWidget(container);
+        }
+        break;
+      case "rightQuote":
+        if (this.settings.showRightQuote ?? true) {
+          this.renderRightQuoteWidget(container);
+        }
+        break;
+      default:
+        if (widgetId.startsWith("custom-")) {
+          const rawId = widgetId.replace("custom-", "");
+          const widget = (this.settings.customWidgets || []).find(w => w.id === rawId);
+          if (widget && (widget.enabled ?? true)) {
+            await this.renderCustomWidget(container, widget);
+          }
+        }
+        break;
+    }
+  }
+
+  private attachDragAndDropToCard(cardEl: HTMLElement, widgetId: string, colId: string): void {
+    cardEl.setAttribute("data-widget-id", widgetId);
+    cardEl.setAttribute("data-col-id", colId);
+    cardEl.setAttribute("draggable", "true");
+
+    const header = cardEl.querySelector(".os-card-header, .os-calendar-header") as HTMLElement;
+    if (header) {
+      const handle = createDiv({ cls: "os-card-drag-handle" });
+      setIcon(handle, "grip-vertical");
+      handle.setAttribute("title", "Drag to move widget");
+
+      const left = header.querySelector(".os-card-header-left, .os-calendar-header-left");
+      if (left) {
+        left.prepend(handle);
+      } else {
+        header.prepend(handle);
+      }
+    }
+
+    cardEl.addEventListener("dragstart", (e: DragEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.closest("button, input, textarea, select, a, .os-today-tab-btn, .os-calendar-nav-btn, .os-color-swatch, .os-task-action-btn, .os-streak-action-btn, .os-streak-actions, .os-agenda-action-btn, .os-card-header-btn")) {
+        e.preventDefault();
+        return;
+      }
+
+      cardEl.addClass("is-dragging");
+      document.body.addClass("os-dashboard-dragging-active");
+      if (e.dataTransfer) {
+        e.dataTransfer.setData("text/plain", widgetId);
+        e.dataTransfer.effectAllowed = "move";
+      }
+    });
+
+    cardEl.addEventListener("dragend", () => {
+      cardEl.removeClass("is-dragging");
+      document.body.removeClass("os-dashboard-dragging-active");
+      document.querySelectorAll(".os-drop-indicator-top, .os-drop-indicator-bottom, .is-drag-over").forEach(el => {
+        el.removeClass("os-drop-indicator-top");
+        el.removeClass("os-drop-indicator-bottom");
+        el.removeClass("is-drag-over");
       });
+    });
+
+    cardEl.addEventListener("dragover", (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+
+      const rect = cardEl.getBoundingClientRect();
+      const midY = rect.top + rect.height / 2;
+
+      if (e.clientY < midY) {
+        cardEl.addClass("os-drop-indicator-top");
+        cardEl.removeClass("os-drop-indicator-bottom");
+      } else {
+        cardEl.addClass("os-drop-indicator-bottom");
+        cardEl.removeClass("os-drop-indicator-top");
+      }
+    });
+
+    cardEl.addEventListener("dragleave", () => {
+      cardEl.removeClass("os-drop-indicator-top");
+      cardEl.removeClass("os-drop-indicator-bottom");
+    });
+
+    cardEl.addEventListener("drop", async (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const draggedId = e.dataTransfer?.getData("text/plain");
+      if (!draggedId || draggedId === widgetId) {
+        cardEl.removeClass("os-drop-indicator-top");
+        cardEl.removeClass("os-drop-indicator-bottom");
+        return;
+      }
+
+      const isBefore = cardEl.hasClass("os-drop-indicator-top");
+      cardEl.removeClass("os-drop-indicator-top");
+      cardEl.removeClass("os-drop-indicator-bottom");
+
+      await this.moveWidget(draggedId, colId, widgetId, isBefore);
+    });
+  }
+
+  private setupColumnDropZone(colEl: HTMLElement, colId: string): void {
+    colEl.setAttribute("data-col-id", colId);
+
+    colEl.addEventListener("dragover", (e: DragEvent) => {
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+      colEl.addClass("is-drag-over");
+    });
+
+    colEl.addEventListener("dragleave", (e: DragEvent) => {
+      if (!colEl.contains(e.relatedTarget as Node)) {
+        colEl.removeClass("is-drag-over");
+      }
+    });
+
+    colEl.addEventListener("drop", async (e: DragEvent) => {
+      e.preventDefault();
+      colEl.removeClass("is-drag-over");
+
+      if ((e.target as HTMLElement).closest(".os-dashboard-card")) {
+        return;
+      }
+
+      const draggedId = e.dataTransfer?.getData("text/plain");
+      if (!draggedId) return;
+
+      await this.moveWidget(draggedId, colId, null, false);
+    });
+  }
+
+  private async moveWidget(draggedId: string, targetColId: string, targetWidgetId: string | null, insertBefore: boolean): Promise<void> {
+    const layout = this.getResolvedLayout();
+
+    const colKeys: (keyof DashboardWidgetLayout)[] = ["col1", "col2", "col3", "rail"];
+    for (const key of colKeys) {
+      layout[key] = layout[key].filter(id => id !== draggedId);
+    }
+
+    const targetList = layout[targetColId as keyof DashboardWidgetLayout];
+    if (!targetList) return;
+
+    if (targetWidgetId) {
+      const targetIdx = targetList.indexOf(targetWidgetId);
+      if (targetIdx >= 0) {
+        const insertIdx = insertBefore ? targetIdx : targetIdx + 1;
+        targetList.splice(insertIdx, 0, draggedId);
+      } else {
+        targetList.push(draggedId);
+      }
+    } else {
+      targetList.push(draggedId);
+    }
+
+    this.settings.widgetLayout = layout;
+    if (this.onSaveSettings) {
+      await this.onSaveSettings();
+    }
+
+    if (this.rootContainerEl) {
+      await this.render(this.rootContainerEl);
     }
   }
 
@@ -283,12 +710,18 @@ export class DashboardRenderer extends Component {
 
     // Main Card Header with switchable Task, Log, and Overdue tabs
     const header = cardEl.createDiv({ cls: "os-card-header os-card-header-tabs" });
-    const tabsWrap = header.createDiv({ cls: "os-today-tab-group" });
+    const headerLeft = header.createDiv({ cls: "os-card-header-left os-today-header-left" });
+    const iconEl = headerLeft.createSpan({ cls: "os-card-icon" });
+    setIcon(iconEl, "check-circle");
+    headerLeft.createEl("h3", { text: "Daily" });
+    const tabsWrap = headerLeft.createDiv({ cls: "os-today-tab-group" });
 
     // 1. Task Tab
     const taskTabBtn = tabsWrap.createEl("button", {
       cls: `os-today-tab-btn ${this.activeTodayTab === "tasks" ? "is-active" : ""}`
     });
+    taskTabBtn.setAttribute("title", "Tasks");
+    taskTabBtn.setAttribute("aria-label", "Tasks");
     const taskIcon = taskTabBtn.createSpan({ cls: "os-today-tab-icon" });
     setIcon(taskIcon, "check-square");
     taskTabBtn.createSpan({ cls: "os-today-tab-label", text: "Task" });
@@ -298,6 +731,8 @@ export class DashboardRenderer extends Component {
     const logTabBtn = tabsWrap.createEl("button", {
       cls: `os-today-tab-btn ${this.activeTodayTab === "log" ? "is-active" : ""}`
     });
+    logTabBtn.setAttribute("title", "Daily Log");
+    logTabBtn.setAttribute("aria-label", "Daily Log");
     const logIcon = logTabBtn.createSpan({ cls: "os-today-tab-icon" });
     setIcon(logIcon, "clipboard-list");
     logTabBtn.createSpan({ cls: "os-today-tab-label", text: "Log" });
@@ -307,6 +742,8 @@ export class DashboardRenderer extends Component {
     const overdueTabBtn = tabsWrap.createEl("button", {
       cls: `os-today-tab-btn os-tab-overdue ${this.activeTodayTab === "overdue" ? "is-active" : ""}`
     });
+    overdueTabBtn.setAttribute("title", "Overdue Tasks");
+    overdueTabBtn.setAttribute("aria-label", "Overdue Tasks");
     const overdueIcon = overdueTabBtn.createSpan({ cls: "os-today-tab-icon" });
     setIcon(overdueIcon, "history");
     overdueTabBtn.createSpan({ cls: "os-today-tab-label", text: "Overdue" });
@@ -367,6 +804,14 @@ export class DashboardRenderer extends Component {
 
     const planFilePath = this.settings.dailyTasksFile;
     const logFilePath = this.settings.dailyLogFile || "Daily Log.md";
+    const habitsFilePath = this.settings.habitsFile || "Habits.md";
+
+    // Auto-populate active, non-frozen streak items into today's tasks
+    if (this.streakService) {
+      const habits = await this.streakService.loadHabits(habitsFilePath, this.settings.streaks || []);
+      this.settings.streaks = habits;
+      await this.streakService.autoPopulateTasks(planFilePath, habits, this.taskService);
+    }
 
     const [planTasks, logTasks, overdueTasks] = await Promise.all([
       this.taskService.getTodayTasks(planFilePath),
@@ -413,6 +858,16 @@ export class DashboardRenderer extends Component {
                 autoLog: this.settings.autoLogToDailyLog ?? true,
                 logFilePath: logFilePath
               });
+              if (this.streakService) {
+                const habits = await this.streakService.loadHabits(habitsFilePath, this.settings.streaks || []);
+                const streakUpdated = this.streakService.handleTaskToggle(task.text, !task.completed, habits);
+                if (streakUpdated) {
+                  await this.streakService.saveHabits(habitsFilePath, habits, this.settings.maxFreezesPerMonth || 4);
+                  this.settings.streaks = habits;
+                  if (this.onSaveSettings) await this.onSaveSettings();
+                  await this.refreshStreaksCard();
+                }
+              }
               await this.renderTodayTasksRefresh(cardEl);
             },
             async (newText: string) => {
@@ -481,6 +936,16 @@ export class DashboardRenderer extends Component {
               await this.taskService.toggleTask(task.sourceFile, task.lineNumber);
               // If unchecking from Log, also uncheck in Daily Tasks
               await this.taskService.uncheckPlannedTaskMatching(planFilePath, task.text);
+              if (this.streakService) {
+                const habits = await this.streakService.loadHabits(habitsFilePath, this.settings.streaks || []);
+                const streakUpdated = this.streakService.handleTaskToggle(task.text, false, habits);
+                if (streakUpdated) {
+                  await this.streakService.saveHabits(habitsFilePath, habits, this.settings.maxFreezesPerMonth || 4);
+                  this.settings.streaks = habits;
+                  if (this.onSaveSettings) await this.onSaveSettings();
+                  await this.refreshStreaksCard();
+                }
+              }
               await this.renderTodayTasksRefresh(cardEl);
             },
             async (newText: string) => {
@@ -494,6 +959,16 @@ export class DashboardRenderer extends Component {
               await this.taskService.deleteTask(task.sourceFile, task.lineNumber);
               // Backward sync: uncheck the matching item in Daily Tasks since it is no longer logged as done
               await this.taskService.uncheckPlannedTaskMatching(planFilePath, task.text);
+              if (this.streakService) {
+                const habits = await this.streakService.loadHabits(habitsFilePath, this.settings.streaks || []);
+                const streakUpdated = this.streakService.handleTaskToggle(task.text, false, habits);
+                if (streakUpdated) {
+                  await this.streakService.saveHabits(habitsFilePath, habits, this.settings.maxFreezesPerMonth || 4);
+                  this.settings.streaks = habits;
+                  if (this.onSaveSettings) await this.onSaveSettings();
+                  await this.refreshStreaksCard();
+                }
+              }
               await this.renderTodayTasksRefresh(cardEl);
             }
           );
@@ -915,7 +1390,6 @@ export class DashboardRenderer extends Component {
     });
 
     const footer = cardEl.createDiv({ cls: "os-capture-footer" });
-    const hint = footer.createSpan({ cls: "os-capture-hint", text: "Press Ctrl+Enter or Cmd+Enter to capture" });
     const button = footer.createEl("button", { cls: "os-capture-button", text: "Capture" });
 
     const submitCapture = async () => {
@@ -928,13 +1402,6 @@ export class DashboardRenderer extends Component {
     };
 
     button.addEventListener("click", submitCapture);
-
-    textarea.addEventListener("keydown", async (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-        e.preventDefault();
-        await submitCapture();
-      }
-    });
   }
 
   // --- Column 3 Widgets ---
@@ -1091,4 +1558,858 @@ export class DashboardRenderer extends Component {
       });
     }
   }
+
+  // =========================================================================
+  // --- Right Rail Widgets: Calendar, Graph view, Streaks, Quote ---
+  // =========================================================================
+
+  private async renderCalendarWidget(container: HTMLElement): Promise<void> {
+    const cardEl = container.createDiv({ cls: "os-dashboard-card os-card-calendar" });
+    this.calendarCardEl = cardEl;
+    await this.renderCalendarContent(cardEl);
+  }
+
+  private openEventModal(event: CalendarEventItem | null, targetDate?: string): void {
+    new EventModal(
+      this.app,
+      event,
+      targetDate || this.selectedCalendarDate,
+      async (savedEvent) => {
+        // 1. Save to configured Events.md Markdown file
+        const eventsFile = this.settings.calendarEventsFile || "Events.md";
+        await this.calendarService.saveEventToMarkdown(eventsFile, savedEvent);
+
+        // 2. Also keep in settings memory for immediate display
+        if (!this.settings.localCalendarEvents) {
+          this.settings.localCalendarEvents = [];
+        }
+        const existingIdx = this.settings.localCalendarEvents.findIndex(e => e.id === savedEvent.id);
+        if (existingIdx >= 0) {
+          this.settings.localCalendarEvents[existingIdx] = savedEvent;
+        } else {
+          this.settings.localCalendarEvents.push(savedEvent);
+        }
+        if (this.onSaveSettings) await this.onSaveSettings();
+        if (this.calendarCardEl) await this.renderCalendarContent(this.calendarCardEl);
+      },
+      async (eventId) => {
+        if (this.settings.localCalendarEvents) {
+          this.settings.localCalendarEvents = this.settings.localCalendarEvents.filter(e => e.id !== eventId);
+          if (this.onSaveSettings) await this.onSaveSettings();
+          if (this.calendarCardEl) await this.renderCalendarContent(this.calendarCardEl);
+        }
+      }
+    ).open();
+  }
+
+  private async renderCalendarContent(cardEl: HTMLElement): Promise<void> {
+    cardEl.empty();
+
+    // 1. Load local events from configured Markdown file (e.g. Events.md)
+    const mdEvents = await this.calendarService.getLocalMarkdownEvents(this.settings.calendarEventsFile || "Events.md");
+
+    // 2. Merge with Google Calendar cached events and any in-memory events
+    const eventMap = new Map<string, CalendarEventItem>();
+    for (const e of this.settings.cachedCalendarEvents || []) {
+      eventMap.set(e.id, e);
+    }
+    for (const e of this.settings.localCalendarEvents || []) {
+      eventMap.set(e.id, e);
+    }
+    for (const e of mdEvents) {
+      eventMap.set(e.id, e);
+    }
+
+    const events = Array.from(eventMap.values());
+    const hasAddress = Boolean(this.settings.googleCalendarUrl);
+
+    // 1. Clean Calendar Header
+    const header = cardEl.createDiv({ cls: "os-calendar-header" });
+
+    // Left Title
+    const leftWrap = header.createDiv({ cls: "os-calendar-header-left" });
+    const title = leftWrap.createDiv({
+      cls: "os-calendar-title",
+      text: this.calendarDate.format("MMMM YYYY")
+    });
+    title.setAttribute("title", "Click to jump to today");
+    title.addEventListener("click", async () => {
+      this.calendarDate = moment();
+      this.selectedCalendarDate = moment().format("YYYY-MM-DD");
+      await this.renderCalendarContent(cardEl);
+    });
+
+    // Right Actions
+    const nav = header.createDiv({ cls: "os-calendar-nav" });
+
+    // Add Event Quick Button (+)
+    const addNavBtn = nav.createDiv({
+      cls: "os-calendar-nav-btn os-calendar-add-event-btn",
+      title: "Add new event"
+    });
+    setIcon(addNavBtn, "plus");
+    addNavBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.openEventModal(null, this.selectedCalendarDate);
+    });
+
+    // View Toggle button (Month Grid vs Events List of this month)
+    const viewBtn = nav.createDiv({
+      cls: "os-calendar-nav-btn",
+      title: this.calendarViewMode === "month" ? "Show list of this month's events" : "Show month calendar grid"
+    });
+    setIcon(viewBtn, this.calendarViewMode === "month" ? "list" : "calendar");
+    viewBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      this.calendarViewMode = this.calendarViewMode === "month" ? "agenda" : "month";
+      await this.renderCalendarContent(cardEl);
+    });
+
+    // Month Navigation: Previous / Next
+    const prevBtn = nav.createDiv({ cls: "os-calendar-nav-btn", title: "Previous month" });
+    setIcon(prevBtn, "chevron-left");
+    prevBtn.addEventListener("click", async () => {
+      this.calendarDate.subtract(1, "month");
+      await this.renderCalendarContent(cardEl);
+    });
+
+    const nextBtn = nav.createDiv({ cls: "os-calendar-nav-btn", title: "Next month" });
+    setIcon(nextBtn, "chevron-right");
+    nextBtn.addEventListener("click", async () => {
+      this.calendarDate.add(1, "month");
+      await this.renderCalendarContent(cardEl);
+    });
+
+    // 2. Render Month Grid or Month Events List
+    if (this.calendarViewMode === "month") {
+      this.renderMonthGrid(cardEl, events);
+    } else {
+      this.renderMonthEventsList(cardEl, events);
+    }
+
+    // 3. Connect Google Calendar Banner if no address set
+    if (!hasAddress) {
+      const banner = cardEl.createDiv({ cls: "os-calendar-address-banner" });
+      banner.createSpan({ cls: "os-calendar-banner-text", text: "Sync Google Calendar events & reminders" });
+      const addAddrBtn = banner.createEl("button", { cls: "os-calendar-address-btn", text: "Add Address" });
+      addAddrBtn.addEventListener("click", () => {
+        const input = prompt("Paste your Google Calendar Secret iCal Address (.ics):", "");
+        if (input && input.trim()) {
+          this.settings.googleCalendarUrl = input.trim();
+          this.calendarService.fetchEvents(this.settings.googleCalendarUrl).then(async (evs) => {
+            this.settings.cachedCalendarEvents = evs;
+            this.settings.lastCalendarSyncTime = Date.now();
+            if (this.onSaveSettings) await this.onSaveSettings();
+            new Notice(`Synced ${evs.length} events from Google Calendar!`);
+            await this.renderCalendarContent(cardEl);
+          }).catch(err => {
+            new Notice(`Sync error: ${err.message || "Invalid URL"}`);
+          });
+        }
+      });
+    }
+  }
+
+  private renderMonthGrid(cardEl: HTMLElement, events: CalendarEventItem[]): void {
+    const weekdaysRow = cardEl.createDiv({ cls: "os-calendar-weekdays" });
+    const weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    weekdays.forEach(day => {
+      weekdaysRow.createDiv({ cls: "os-calendar-weekday", text: day });
+    });
+
+    const daysGrid = cardEl.createDiv({ cls: "os-calendar-grid" });
+
+    const startOfMonth = this.calendarDate.clone().startOf("month");
+    const daysInMonth = this.calendarDate.daysInMonth();
+    let startDayOfWeek = (startOfMonth.day() + 6) % 7;
+
+    const prevMonth = this.calendarDate.clone().subtract(1, "month");
+    const daysInPrevMonth = prevMonth.daysInMonth();
+    const todayStr = moment().format("YYYY-MM-DD");
+
+    // Trailing days from previous month
+    for (let i = startDayOfWeek - 1; i >= 0; i--) {
+      const dayNum = daysInPrevMonth - i;
+      const dateStr = prevMonth.clone().date(dayNum).format("YYYY-MM-DD");
+      const dayEl = daysGrid.createDiv({
+        cls: "os-calendar-day is-other-month"
+      });
+      const numWrap = dayEl.createDiv({ cls: "os-calendar-day-num-wrap" });
+      numWrap.createSpan({ cls: "os-calendar-day-num", text: String(dayNum) });
+      dayEl.addEventListener("click", async () => {
+        this.calendarDate.subtract(1, "month");
+        this.selectedCalendarDate = dateStr;
+        await this.renderCalendarContent(cardEl);
+      });
+    }
+
+    // Days of current month
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dateStr = this.calendarDate.clone().date(day).format("YYYY-MM-DD");
+      const isToday = dateStr === todayStr;
+      const isSelected = dateStr === this.selectedCalendarDate;
+      const dayEvents = this.calendarService.getEventsForDate(events, dateStr);
+
+      const dayEl = daysGrid.createDiv({
+        cls: `os-calendar-day ${isToday ? "is-today" : ""} ${isSelected ? "is-selected" : ""}`
+      });
+
+      // Hover title with list of events on this day
+      if (dayEvents.length > 0) {
+        const eventTitles = dayEvents.map(e => `• ${e.title} (${e.isAllDay ? "All day" : e.startTime})`).join("\n");
+        dayEl.setAttribute("title", isToday ? `${dateStr} (Today):\n${eventTitles}\n\nClick to add/edit events` : `${dateStr}:\n${eventTitles}\n\nClick to add/edit events`);
+      } else {
+        dayEl.setAttribute("title", isToday ? `${dateStr} (Today): Click to add event` : `${dateStr}: Click to add event`);
+      }
+
+      const numWrap = dayEl.createDiv({ cls: "os-calendar-day-num-wrap" });
+      numWrap.createSpan({ cls: "os-calendar-day-num", text: String(day) });
+      if (isToday) {
+        const todayIcon = numWrap.createSpan({ cls: "os-calendar-today-icon" });
+        setIcon(todayIcon, "sparkle");
+        todayIcon.setAttribute("title", "Today");
+      }
+
+      // Calendar Event Dots
+      if (dayEvents.length > 0) {
+        const dotsWrap = dayEl.createDiv({ cls: "os-calendar-event-dots" });
+        const maxDots = Math.min(dayEvents.length, 3);
+        for (let k = 0; k < maxDots; k++) {
+          const dot = dotsWrap.createSpan({ cls: "os-calendar-dot" });
+          if (dayEvents[k].color) {
+            dot.style.backgroundColor = dayEvents[k].color!;
+          }
+        }
+      }
+
+      dayEl.addEventListener("click", async (e) => {
+        // If clicking already selected date or double click, open event modal!
+        if (this.selectedCalendarDate === dateStr || e.detail === 2) {
+          this.openEventModal(null, dateStr);
+        } else {
+          this.selectedCalendarDate = dateStr;
+          await this.renderCalendarContent(cardEl);
+        }
+      });
+    }
+
+    // Trailing days to fill standard grid
+    const totalCells = startDayOfWeek + daysInMonth;
+    const targetCells = totalCells > 35 ? 42 : 35;
+    const remainingDays = targetCells - totalCells;
+
+    for (let day = 1; day <= remainingDays; day++) {
+      const nextMonth = this.calendarDate.clone().add(1, "month");
+      const dateStr = nextMonth.date(day).format("YYYY-MM-DD");
+      const dayEl = daysGrid.createDiv({
+        cls: "os-calendar-day is-other-month"
+      });
+      const numWrap = dayEl.createDiv({ cls: "os-calendar-day-num-wrap" });
+      numWrap.createSpan({ cls: "os-calendar-day-num", text: String(day) });
+      dayEl.addEventListener("click", async () => {
+        this.calendarDate.add(1, "month");
+        this.selectedCalendarDate = dateStr;
+        await this.renderCalendarContent(cardEl);
+      });
+    }
+  }
+
+  private renderMonthEventsList(cardEl: HTMLElement, events: CalendarEventItem[]): void {
+    const listWrap = cardEl.createDiv({ cls: "os-calendar-agenda" });
+
+    // Collect all occurrences in the currently viewed month
+    const daysInMonth = this.calendarDate.daysInMonth();
+    const monthOccurrences: { dateStr: string; event: CalendarEventItem }[] = [];
+
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dateStr = this.calendarDate.clone().date(day).format("YYYY-MM-DD");
+      const dayEvs = this.calendarService.getEventsForDate(events, dateStr);
+      for (const ev of dayEvs) {
+        monthOccurrences.push({ dateStr, event: ev });
+      }
+    }
+
+    if (monthOccurrences.length === 0) {
+      const emptyDiv = listWrap.createDiv({ cls: "os-agenda-empty" });
+      emptyDiv.createSpan({
+        cls: "os-agenda-empty-text",
+        text: `No events in ${this.calendarDate.format("MMMM YYYY")}.`
+      });
+      const quickAddBtn = emptyDiv.createEl("button", {
+        cls: "os-agenda-quick-add-btn",
+        text: "+ Add Event"
+      });
+      quickAddBtn.addEventListener("click", () => {
+        this.openEventModal(null, this.selectedCalendarDate);
+      });
+      return;
+    }
+
+    const listEl = listWrap.createDiv({ cls: "os-agenda-list" });
+
+    for (const item of monthOccurrences) {
+      const ev = item.event;
+      const mom = moment(item.dateStr, "YYYY-MM-DD");
+
+      const itemEl = listEl.createDiv({ cls: "os-agenda-item" });
+
+      // Left Date Badge (e.g. 19 Oct)
+      const dateBadge = itemEl.createDiv({ cls: "os-agenda-date-badge" });
+      dateBadge.createSpan({ cls: "os-agenda-date-badge-day", text: mom.format("D") });
+      dateBadge.createSpan({ cls: "os-agenda-date-badge-month", text: mom.format("MMM") });
+
+      // Vertical Color Accent Bar
+      const bar = itemEl.createDiv({ cls: "os-agenda-color-bar" });
+      if (ev.color) bar.style.backgroundColor = ev.color;
+
+      const contentBox = itemEl.createDiv({ cls: "os-agenda-content" });
+      const topRow = contentBox.createDiv({ cls: "os-agenda-top-row" });
+
+      const titleWrap = topRow.createDiv({ cls: "os-agenda-title-wrap" });
+      titleWrap.createSpan({ cls: "os-agenda-event-title", text: ev.title });
+
+      if (ev.recurrence && ev.recurrence.type !== "none") {
+        const repSpan = titleWrap.createSpan({
+          cls: "os-agenda-repeat-icon",
+          title: `Repeats: ${ev.recurrence.type === "custom_days" ? `Every ${ev.recurrence.intervalDays || 1} days` : ev.recurrence.type}`
+        });
+        setIcon(repSpan, "refresh-cw");
+      }
+
+      const timeText = ev.isAllDay ? "All day" : (ev.startTime ? (ev.endTime ? `${ev.startTime} - ${ev.endTime}` : ev.startTime) : "All day");
+      topRow.createSpan({ cls: `os-agenda-event-time ${ev.isAllDay ? "is-all-day" : ""}`, text: timeText });
+
+      if (ev.location) {
+        const locRow = contentBox.createDiv({ cls: "os-agenda-sub-row" });
+        const locIcon = locRow.createSpan({ cls: "os-agenda-icon" });
+        setIcon(locIcon, "map-pin");
+        locRow.createSpan({ text: ev.location });
+      }
+
+      if (ev.description) {
+        contentBox.createDiv({ cls: "os-agenda-desc-row", text: ev.description });
+      }
+
+      itemEl.addEventListener("click", () => {
+        const origEvent = this.settings.localCalendarEvents?.find(x => x.id === ev.id) || ev;
+        this.openEventModal(origEvent, item.dateStr);
+      });
+    }
+  }
+
+  private async renderGraphWidget(container: HTMLElement): Promise<void> {
+    const cardEl = container.createDiv({ cls: "os-dashboard-card os-card-graph" });
+
+    // Header
+    const header = cardEl.createDiv({ cls: "os-card-header" });
+    const titleLeft = header.createDiv({ cls: "os-card-header-left" });
+    const iconEl = titleLeft.createSpan({ cls: "os-card-icon" });
+    setIcon(iconEl, "git-fork");
+    titleLeft.createEl("h3", { text: "Graph view" });
+
+    const headerActions = header.createDiv({ cls: "os-card-header-actions" });
+
+    const refreshBtn = headerActions.createDiv({ cls: "os-card-header-btn", title: "Refresh graph view" });
+    setIcon(refreshBtn, "refresh-cw");
+
+    const expandBtn = headerActions.createDiv({ cls: "os-card-header-btn", title: "Open Obsidian Graph View" });
+    setIcon(expandBtn, "maximize-2");
+    expandBtn.addEventListener("click", () => {
+      // @ts-ignore
+      this.app.commands?.executeCommandById("graph:open");
+    });
+
+    const graphBody = cardEl.createDiv({ cls: "os-graph-body" });
+
+    const renderRealGraph = async () => {
+      graphBody.empty();
+
+      // Clean up previous embedded leaf if any
+      if (this.embeddedGraphLeaf) {
+        try {
+          if (this.embeddedGraphLeaf.view) {
+            (this.embeddedGraphLeaf.view as any).saveSettings = () => {};
+            (this.embeddedGraphLeaf.view as any).saveState = () => {};
+            (this.embeddedGraphLeaf.view as any).save = () => {};
+          }
+          this.embeddedGraphLeaf.detach();
+        } catch (e) {}
+        this.embeddedGraphLeaf = null;
+      }
+
+      // Check if Obsidian Core Graph plugin is enabled
+      const graphPlugin = (this.app as any).internalPlugins?.getPluginById("graph");
+      const isEnabled = graphPlugin && graphPlugin.enabled;
+
+      if (!isEnabled) {
+        const disabledDiv = graphBody.createDiv({ cls: "os-graph-disabled-box" });
+        disabledDiv.createEl("p", {
+          cls: "os-graph-disabled-text",
+          text: "Obsidian Core Graph plugin is currently disabled."
+        });
+        const enableBtn = disabledDiv.createEl("button", {
+          cls: "os-graph-enable-btn",
+          text: "Enable Graph Plugin"
+        });
+        enableBtn.addEventListener("click", async () => {
+          try {
+            if (graphPlugin) {
+              await graphPlugin.enable();
+              await renderRealGraph();
+            } else {
+              // @ts-ignore
+              this.app.setting?.open?.();
+              // @ts-ignore
+              this.app.setting?.openTabById?.("core-plugins");
+            }
+          } catch (e) {
+            new Notice("Please enable Graph view in Settings > Core plugins.");
+          }
+        });
+        return;
+      }
+
+      try {
+        // Instantiate Obsidian WorkspaceLeaf for the real graph view
+        const leaf = new (WorkspaceLeaf as any)(this.app);
+        if (leaf) {
+          (leaf as any).parent = (this.app.workspace as any).rootSplit || this.app.workspace.activeLeaf?.parent;
+
+          // Read saved graph configuration (groups, colors, filters) from vault config
+          let savedGraphState: any = {};
+          try {
+            const configDir = (this.app.vault as any).configDir || ".obsidian";
+            if (await this.app.vault.adapter.exists(`${configDir}/graph.json`)) {
+              const raw = await this.app.vault.adapter.read(`${configDir}/graph.json`);
+              if (raw) savedGraphState = JSON.parse(raw);
+            }
+          } catch (e) {}
+
+          await leaf.setViewState({
+            type: "graph",
+            state: savedGraphState
+          });
+
+          if (leaf.view && leaf.view.containerEl) {
+            // Prevent embedded mini graph from overwriting the user's graph.json settings
+            (leaf.view as any).saveSettings = () => {};
+            (leaf.view as any).saveState = () => {};
+            (leaf.view as any).save = () => {};
+
+            this.embeddedGraphLeaf = leaf;
+            const embedWrap = graphBody.createDiv({ cls: "os-real-graph-embed" });
+            embedWrap.appendChild(leaf.view.containerEl);
+
+            // Hide redundant inner tab header
+            const innerHeader = leaf.view.containerEl.querySelector(".view-header");
+            if (innerHeader) (innerHeader as HTMLElement).style.display = "none";
+
+            // Trigger canvas resize
+            setTimeout(() => {
+              try {
+                (leaf.view as any)?.onResize?.();
+              } catch (e) {}
+            }, 100);
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to embed native graph leaf:", err);
+      }
+
+      // Fallback message if instantiation fails
+      const fallbackDiv = graphBody.createDiv({ cls: "os-graph-disabled-box" });
+      fallbackDiv.createEl("p", {
+        cls: "os-graph-disabled-text",
+        text: "Click below to launch Obsidian Graph View."
+      });
+      const openBtn = fallbackDiv.createEl("button", {
+        cls: "os-graph-enable-btn",
+        text: "Open Graph View"
+      });
+      openBtn.addEventListener("click", () => {
+        // @ts-ignore
+        this.app.commands?.executeCommandById("graph:open");
+      });
+    };
+
+    await renderRealGraph();
+
+    refreshBtn.addEventListener("click", async () => {
+      refreshBtn.addClass("is-spinning");
+      if (this.embeddedGraphLeaf?.view) {
+        try {
+          (this.embeddedGraphLeaf.view as any)?.onResize?.();
+        } catch (e) {}
+      } else {
+        await renderRealGraph();
+      }
+      setTimeout(() => refreshBtn.removeClass("is-spinning"), 600);
+    });
+  }
+
+  private async refreshStreaksCard(): Promise<void> {
+    if (this.streaksCardEl) {
+      await this.renderStreaksContent(this.streaksCardEl);
+    }
+  }
+
+  private async renderStreaksWidget(container: HTMLElement): Promise<void> {
+    const cardEl = container.createDiv({ cls: "os-dashboard-card os-card-streaks" });
+    this.streaksCardEl = cardEl;
+    await this.renderStreaksContent(cardEl);
+  }
+
+  private async renderStreaksContent(cardEl: HTMLElement): Promise<void> {
+    cardEl.empty();
+
+    const habitsFilePath = this.settings.habitsFile || "Habits.md";
+    const archiveFilePath = this.settings.archiveHabitsFile || "99 Archive/Habit.md";
+    const maxFreezes = this.settings.maxFreezesPerMonth || 4;
+
+    // Load habits from markdown file
+    const streaks = await this.streakService.loadHabits(habitsFilePath, this.settings.streaks || []);
+    this.settings.streaks = streaks;
+
+    // Header
+    const header = cardEl.createDiv({ cls: "os-card-header" });
+    const titleLeft = header.createDiv({ cls: "os-card-header-left" });
+    const iconEl = titleLeft.createSpan({ cls: "os-card-icon" });
+    setIcon(iconEl, "flame");
+    titleLeft.createEl("h3", { text: "Streaks" });
+
+    const headerActions = header.createDiv({ cls: "os-card-header-actions" });
+    const addBtn = headerActions.createDiv({ cls: "os-card-header-btn", title: "Add new habit" });
+    setIcon(addBtn, "plus");
+    addBtn.addEventListener("click", () => {
+      new StreakModal(this.app, null, async (newStreak) => {
+        streaks.push(newStreak);
+        await this.streakService.saveHabits(habitsFilePath, streaks, maxFreezes);
+        this.settings.streaks = streaks;
+        if (this.onSaveSettings) {
+          await this.onSaveSettings();
+        } else {
+          await this.renderStreaksContent(cardEl);
+          const todayCard = document.querySelector(".os-card-today") as HTMLElement;
+          if (todayCard) await this.renderTodayTasksRefresh(todayCard);
+        }
+      }).open();
+    });
+
+    const bodyEl = cardEl.createDiv({ cls: "os-streaks-body" });
+
+    if (streaks.length === 0) {
+      const emptyDiv = bodyEl.createDiv({ cls: "os-streak-empty-state" });
+      emptyDiv.createEl("p", { cls: "os-streak-empty-text", text: "No streaks yet. Add habits to auto-populate them in Daily Tasks." });
+      const emptyAddBtn = emptyDiv.createEl("button", { cls: "os-streak-empty-btn", text: "+ Add Habit Streak" });
+      emptyAddBtn.addEventListener("click", () => {
+        new StreakModal(this.app, null, async (newStreak) => {
+          streaks.push(newStreak);
+          await this.streakService.saveHabits(habitsFilePath, streaks, maxFreezes);
+          this.settings.streaks = streaks;
+          if (this.onSaveSettings) {
+            await this.onSaveSettings();
+          } else {
+            await this.renderStreaksContent(cardEl);
+            const todayCard = document.querySelector(".os-card-today") as HTMLElement;
+            if (todayCard) await this.renderTodayTasksRefresh(todayCard);
+          }
+        }).open();
+      });
+      return;
+    }
+
+    for (const streak of streaks) {
+      const freq = streak.frequency || "daily";
+      const isFrozen = this.streakService.isFrozen(streak);
+      const isDone = this.streakService.isCompletedInCurrentCycle(streak);
+      const daysLeft = this.streakService.getFreezeDaysLeft(streak);
+      const daysRemainingInCycle = this.streakService.getDaysRemainingInCycle(streak);
+      const habitMaxFreezes = this.streakService.getEffectiveMaxFreezes(streak, maxFreezes);
+      const usedFreezes = this.streakService.getFreezesUsedThisMonth(streak);
+      const remainingFreezes = this.streakService.getFreezesRemainingThisMonth(streak, habitMaxFreezes);
+
+      const streakUnit = freq === "weekly"
+        ? (streak.currentStreak === 1 ? "wk" : "wks")
+        : freq === "monthly"
+        ? (streak.currentStreak === 1 ? "mo" : "mos")
+        : freq === "yearly"
+        ? (streak.currentStreak === 1 ? "yr" : "yrs")
+        : (streak.currentStreak === 1 ? "day" : "days");
+
+      const bestUnit = freq === "weekly" ? "weeks" : freq === "monthly" ? "months" : freq === "yearly" ? "years" : "days";
+
+      // Streak row is NOT clickable for toggling (completion happens in Daily Tasks)
+      const row = bodyEl.createDiv({
+        cls: `os-streak-row ${isDone ? "is-completed" : ""} ${isFrozen ? "is-frozen" : ""}`
+      });
+
+      // Best streak & all details strictly shown on hover via tooltip
+      const tooltipLines = [
+        `Habit: ${streak.name}`,
+        ...(streak.description ? [`Description: ${streak.description}`] : []),
+        `Frequency: ${freq.charAt(0).toUpperCase() + freq.slice(1)}${freq !== "daily" ? ` (${streak.scheduleType === "fixed" ? "Fixed" : "Flexible"})` : ""}`,
+        `Current Streak: ${streak.currentStreak || 0} ${streakUnit}`,
+        `Best Streak: ${streak.bestStreak || streak.currentStreak || 0} ${bestUnit}`,
+        `Start Date: ${streak.startDate || "Not specified"}`,
+        `Created: ${streak.createdDate || "N/A"}`,
+        `Freeze Quota: ${usedFreezes} / ${habitMaxFreezes} used (${remainingFreezes} left this ${streak.freezePeriodType || "month"})`,
+        isFrozen
+          ? `Status: Frozen until ${streak.frozenUntil} (${daysLeft} day${daysLeft === 1 ? "" : "s"} remaining)`
+          : (isDone
+              ? `Status: Completed for this ${freq === "weekly" ? "week" : freq === "monthly" ? "month" : freq === "yearly" ? "year" : "day"}!`
+              : `Status: Pending (${daysRemainingInCycle} day${daysRemainingInCycle === 1 ? "" : "s"} left in cycle)`)
+      ];
+      row.setAttribute("title", tooltipLines.join("\n"));
+
+      // Click to open Habit Details & Calendar Modal
+      row.addEventListener("click", (e) => {
+        const target = e.target as HTMLElement;
+        if (target.closest(".os-streak-frozen-pill, .os-streak-cycle-pill, .os-streak-action-btn, button")) {
+          return;
+        }
+        new HabitDetailsModal(
+          this.app,
+          streak,
+          this.streakService,
+          this.settings,
+          async () => {
+            await this.streakService.saveHabits(habitsFilePath, streaks, maxFreezes);
+            if (this.onSaveSettings) {
+              await this.onSaveSettings();
+            } else {
+              await this.renderStreaksContent(cardEl);
+              const todayCard = document.querySelector(".os-card-today") as HTMLElement;
+              if (todayCard) await this.renderTodayTasksRefresh(todayCard);
+            }
+          }
+        ).open();
+      });
+
+      // Right-click context menu
+      row.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        const menu = new Menu();
+
+        menu.addItem((item) => {
+          item
+            .setTitle("View Details & Calendar")
+            .setIcon("calendar")
+            .onClick(() => {
+              new HabitDetailsModal(
+                this.app,
+                streak,
+                this.streakService,
+                this.settings,
+                async () => {
+                  await this.streakService.saveHabits(habitsFilePath, streaks, maxFreezes);
+                  if (this.onSaveSettings) {
+                    await this.onSaveSettings();
+                  } else {
+                    await this.renderStreaksContent(cardEl);
+                    const todayCard = document.querySelector(".os-card-today") as HTMLElement;
+                    if (todayCard) await this.renderTodayTasksRefresh(todayCard);
+                  }
+                }
+              ).open();
+            });
+        });
+
+        if (!isDone) {
+          menu.addItem((item) => {
+            item
+              .setTitle("Add to Today's Plan")
+              .setIcon("calendar-plus")
+              .onClick(async () => {
+                const res = await this.streakService.addHabitToToday(this.settings.dailyTasksFile, streak, this.taskService);
+                new Notice(res.message);
+                if (res.success) {
+                  const todayCard = document.querySelector(".os-card-today") as HTMLElement;
+                  if (todayCard) await this.renderTodayTasksRefresh(todayCard);
+                }
+              });
+          });
+        }
+
+        menu.addItem((item) => {
+          item
+            .setTitle(isFrozen ? "Manage Freeze" : "Freeze Habit")
+            .setIcon("snowflake")
+            .onClick(() => {
+              new FreezeStreakModal(this.app, streak, this.streakService, habitMaxFreezes, async () => {
+                await this.streakService.saveHabits(habitsFilePath, streaks, maxFreezes);
+                this.settings.streaks = streaks;
+                if (this.onSaveSettings) await this.onSaveSettings();
+                await this.renderStreaksContent(cardEl);
+                const todayCard = document.querySelector(".os-card-today") as HTMLElement;
+                if (todayCard) await this.renderTodayTasksRefresh(todayCard);
+              }).open();
+            });
+        });
+
+        menu.addItem((item) => {
+          item
+            .setTitle("Edit Habit...")
+            .setIcon("pencil")
+            .onClick(() => {
+              new StreakModal(this.app, streak, async (updated) => {
+                await this.streakService.updateHabitDetails(
+                  habitsFilePath,
+                  streak.id,
+                  updated.name,
+                  updated.description,
+                  this.settings
+                );
+                if (this.onSaveSettings) {
+                  await this.onSaveSettings();
+                } else {
+                  await this.renderStreaksContent(cardEl);
+                  const todayCard = document.querySelector(".os-card-today") as HTMLElement;
+                  if (todayCard) await this.renderTodayTasksRefresh(todayCard);
+                }
+              }).open();
+            });
+        });
+
+        menu.addItem((item) => {
+          item
+            .setTitle("Archive or Delete...")
+            .setIcon("trash-2")
+            .onClick(() => {
+              new ArchiveOrDeleteStreakModal(
+                this.app,
+                streak,
+                archiveFilePath,
+                async () => {
+                  await this.streakService.archiveHabit(habitsFilePath, archiveFilePath, streak.id, this.settings);
+                  if (this.onSaveSettings) {
+                    await this.onSaveSettings();
+                  } else {
+                    await this.renderStreaksContent(cardEl);
+                    const todayCard = document.querySelector(".os-card-today") as HTMLElement;
+                    if (todayCard) await this.renderTodayTasksRefresh(todayCard);
+                  }
+                },
+                async () => {
+                  await this.streakService.deleteHabit(habitsFilePath, streak.id, this.settings);
+                  if (this.onSaveSettings) {
+                    await this.onSaveSettings();
+                  } else {
+                    await this.renderStreaksContent(cardEl);
+                    const todayCard = document.querySelector(".os-card-today") as HTMLElement;
+                    if (todayCard) await this.renderTodayTasksRefresh(todayCard);
+                  }
+                }
+              ).open();
+            });
+        });
+
+        menu.showAtMouseEvent(e);
+      });
+
+      // Habit Icon
+      const habitIcon = row.createSpan({ cls: "os-streak-habit-icon" });
+      setIcon(habitIcon, streak.icon || "flame");
+
+      // Habit Name
+      row.createSpan({ cls: "os-streak-name", text: streak.name });
+
+      // Right Pill: Streak Count, Cycle Countdown, or Frozen status
+      const rightWrap = row.createDiv({ cls: "os-streak-right" });
+
+      if (isFrozen) {
+        const freezePill = rightWrap.createSpan({
+          cls: "os-streak-frozen-pill",
+          text: `❄️ ${daysLeft}d left`
+        });
+        freezePill.setAttribute("title", `Frozen until ${streak.frozenUntil}. Click to manage freeze.`);
+        freezePill.addEventListener("click", (e) => {
+          e.stopPropagation();
+          new FreezeStreakModal(this.app, streak, this.streakService, habitMaxFreezes, async () => {
+            await this.streakService.saveHabits(habitsFilePath, streaks, maxFreezes);
+            this.settings.streaks = streaks;
+            if (this.onSaveSettings) {
+              await this.onSaveSettings();
+            } else {
+              await this.renderStreaksContent(cardEl);
+              const todayCard = document.querySelector(".os-card-today") as HTMLElement;
+              if (todayCard) await this.renderTodayTasksRefresh(todayCard);
+            }
+          }).open();
+        });
+      } else if (freq === "weekly" || freq === "monthly" || freq === "yearly") {
+        if (isDone) {
+          rightWrap.createSpan({
+            cls: "os-streak-count is-done-today",
+            text: `✓ Done (${streak.currentStreak || 0} ${streakUnit})`
+          });
+        } else {
+          // Cycle countdown badge
+          const cyclePill = rightWrap.createSpan({
+            cls: "os-streak-cycle-pill",
+            text: `⏳ ${daysRemainingInCycle}d left`
+          });
+          cyclePill.setAttribute("title", `Due before cycle ends. Current streak: ${streak.currentStreak || 0} ${streakUnit}`);
+        }
+      } else {
+        // Daily
+        const countSpan = rightWrap.createSpan({
+          cls: `os-streak-count ${isDone ? "is-done-today" : ""}`,
+          text: `${streak.currentStreak || 0} days`
+        });
+        if (isDone) {
+          countSpan.setAttribute("title", "Completed today in Daily Tasks!");
+        }
+      }
+    }
+  }
+
+  private renderRightQuoteWidget(container: HTMLElement): void {
+    const cardEl = container.createDiv({ cls: "os-dashboard-card os-card-right-quote" });
+
+    // Header
+    const header = cardEl.createDiv({ cls: "os-card-header" });
+    const titleLeft = header.createDiv({ cls: "os-card-header-left" });
+    const iconEl = titleLeft.createSpan({ cls: "os-card-icon" });
+    setIcon(iconEl, "sparkles");
+    titleLeft.createEl("h3", { text: "Quote" });
+
+    const headerActions = header.createDiv({ cls: "os-card-header-actions" });
+    const editBtn = headerActions.createDiv({ cls: "os-card-header-btn", title: "Edit quote" });
+    setIcon(editBtn, "pencil");
+
+    const quoteText = this.settings.rightRailQuote || "“Consistency is more important than intensity.”";
+    const bodyEl = cardEl.createDiv({ cls: "os-right-quote-body" });
+    const quoteEl = bodyEl.createEl("blockquote", { cls: "os-right-quote-text", text: quoteText });
+
+    if (this.settings.rightRailQuoteAuthor) {
+      bodyEl.createDiv({ cls: "os-right-quote-author", text: `— ${this.settings.rightRailQuoteAuthor}` });
+    }
+
+    const openEditModal = () => {
+      new QuoteModal(
+        this.app,
+        this.settings.rightRailQuote || "“Consistency is more important than intensity.”",
+        this.settings.rightRailQuoteAuthor || "",
+        async (newQuote, newAuthor) => {
+          this.settings.rightRailQuote = newQuote;
+          this.settings.rightRailQuoteAuthor = newAuthor;
+          if (this.onSaveSettings) await this.onSaveSettings();
+          if (this.rootContainerEl) await this.render(this.rootContainerEl);
+        }
+      ).open();
+    };
+
+    editBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openEditModal();
+    });
+
+    quoteEl.setAttribute("title", "Click to edit quote");
+    quoteEl.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openEditModal();
+    });
+  }
 }
+

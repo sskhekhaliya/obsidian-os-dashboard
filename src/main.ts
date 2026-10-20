@@ -9,6 +9,8 @@ import { RecentNotesService } from "./services/recentNotesService";
 import { QuickCaptureService } from "./services/quickCaptureService";
 import { ProjectService } from "./services/projectService";
 import { QuoteService } from "./services/quoteService";
+import { StreakService } from "./services/streakService";
+import { CalendarService } from "./services/calendarService";
 import { DashboardRenderer } from "./view/renderer";
 
 export default class OSDashboardPlugin extends Plugin {
@@ -21,6 +23,8 @@ export default class OSDashboardPlugin extends Plugin {
   public quickCaptureService!: QuickCaptureService;
   public projectService!: ProjectService;
   public quoteService!: QuoteService;
+  public streakService!: StreakService;
+  public calendarService!: CalendarService;
 
   public async onload(): Promise<void> {
     await this.loadSettings();
@@ -33,6 +37,44 @@ export default class OSDashboardPlugin extends Plugin {
     this.quickCaptureService = new QuickCaptureService(this.app);
     this.projectService = new ProjectService(this.app, this.iconService);
     this.quoteService = new QuoteService(this.app);
+    this.streakService = new StreakService(this.app);
+    this.calendarService = new CalendarService(this.app);
+
+    // Initial background calendar sync & notification check if URL is configured
+    if (this.settings.googleCalendarUrl) {
+      this.calendarService.fetchEvents(this.settings.googleCalendarUrl).then(events => {
+        this.settings.cachedCalendarEvents = events;
+        this.settings.lastCalendarSyncTime = Date.now();
+        if (this.settings.enableCalendarNotifications) {
+          this.calendarService.checkUpcomingEventNotifications(events, this.settings.calendarNotificationLeadMinutes || 10);
+        }
+      }).catch(err => {
+        console.warn("[OS Dashboard] Could not auto-sync Google Calendar on startup:", err);
+      });
+    }
+
+    // Periodic calendar sync & notification interval (checks every 60 seconds)
+    this.registerInterval(
+      window.setInterval(async () => {
+        if (this.settings.googleCalendarUrl && this.settings.googleCalendarAutoSync) {
+          try {
+            const events = await this.calendarService.fetchEvents(this.settings.googleCalendarUrl);
+            this.settings.cachedCalendarEvents = events;
+            this.settings.lastCalendarSyncTime = Date.now();
+          } catch (e) {}
+        }
+
+        if (this.settings.enableCalendarNotifications) {
+          const mdEvents = await this.calendarService.getLocalMarkdownEvents(this.settings.calendarEventsFile || "Events.md");
+          const allEvents = [
+            ...(this.settings.cachedCalendarEvents || []),
+            ...(this.settings.localCalendarEvents || []),
+            ...mdEvents
+          ];
+          this.calendarService.checkUpcomingEventNotifications(allEvents, this.settings.calendarNotificationLeadMinutes || 10);
+        }
+      }, 60 * 1000)
+    );
 
     // Register Custom View
     this.registerView(
@@ -66,7 +108,10 @@ export default class OSDashboardPlugin extends Plugin {
         this.quickCaptureService,
         this.projectService,
         this.quoteService,
-        this.iconService
+        this.iconService,
+        this.streakService,
+        this.calendarService,
+        () => this.saveSettings()
       );
       await renderer.render(el);
     });
@@ -132,7 +177,17 @@ export default class OSDashboardPlugin extends Plugin {
   }
 
   public async loadSettings(): Promise<void> {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    const data = await this.loadData();
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
+
+    // Clean up initial dummy mock streaks if present from previous version
+    if (this.settings.streaks && this.settings.streaks.length === 5) {
+      const isDummy = this.settings.streaks.every(s => ["1", "2", "3", "4", "5"].includes(s.id) && [12, 8, 5, 10, 7].includes(s.currentStreak));
+      if (isDummy) {
+        this.settings.streaks = [];
+        await this.saveData(this.settings);
+      }
+    }
   }
 
   public async saveSettings(): Promise<void> {

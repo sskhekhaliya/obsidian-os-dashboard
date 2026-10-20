@@ -415,14 +415,29 @@ export class TaskService {
         const formattedTasks = validTasks.map(t => `- ${mark} ${t}`);
 
         if (headingIndex !== -1) {
+          // Check existing tasks under this heading to prevent duplicate entries
+          const existingUnderHeading = new Set<string>();
           let insertIndex = lines.length;
           for (let i = headingIndex + 1; i < lines.length; i++) {
             if (/^#{1,6}\s+/.test(lines[i])) {
               insertIndex = i;
               break;
             }
+            const match = lines[i].match(/^[-*]\s*(\[[ xX]\]\s*)?(.*)$/);
+            if (match) {
+              existingUnderHeading.add(match[2].trim().toLowerCase());
+            }
           }
-          lines.splice(insertIndex, 0, ...formattedTasks);
+
+          const tasksToInsert = validTasks
+            .filter(t => !existingUnderHeading.has(t.toLowerCase()))
+            .map(t => `- ${mark} ${t}`);
+
+          if (tasksToInsert.length === 0) {
+            return lines.join("\n");
+          }
+
+          lines.splice(insertIndex, 0, ...tasksToInsert);
         } else {
           if (data.trim().length > 0) {
             lines.push("");

@@ -47,3 +47,20 @@ A sleek personal operating system dashboard for your Obsidian vault, inspired by
      ````
 2. **Settings:**
    - Open **Settings** > **OS Dashboard** to configure banner images, quotes, task paths, project folders, and bookmark links.
+
+---
+
+## ☕ Support
+
+If you find **OS Dashboard** helpful for managing your knowledge, habits, and daily workflow, consider supporting my work:
+
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/sskhekhaliya)
+
+---
+
+## 📄 License & Credits
+
+- **Author**: [SSKhekhaliya](https://www.sskhekhaliya.in/)
+- **Support**: [buymeacoffee.com/sskhekhaliya](https://buymeacoffee.com/sskhekhaliya)
+- **License**: MIT License © [SSKhekhaliya](https://www.sskhekhaliya.in/)
+- Built with ❤️ for the [Obsidian](https://obsidian.md) community.

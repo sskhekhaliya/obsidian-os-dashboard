@@ -1,10 +1,10 @@
 import { App, PluginSettingTab, Setting, setIcon, Notice } from "obsidian";
+import * as obsidian from "obsidian";
 import type OSDashboardPlugin from "./main";
-import { CustomWidget, StreakItem } from "./types";
-import { StreakModal } from "./modals/streakModal";
-import { FreezeStreakModal } from "./modals/freezeStreakModal";
-import { ArchiveOrDeleteStreakModal } from "./modals/archiveOrDeleteStreakModal";
+import { CustomWidget, CustomWidgetButton, WidgetCustomization, OSDashboardSettings, StreakItem, DashboardWidgetLayout, moment, getDailyNotesFormat } from "./types";
+import { IconService } from "./services/iconService";
 import { FileSuggest } from "./modals/fileSuggest";
+import { WikiLinkSuggest } from "./modals/wikiLinkSuggest";
 
 type SettingsTabId = "general" | "navigation" | "widgets" | "streaks" | "tasks-projects" | "bookmarks";
 
@@ -30,8 +30,8 @@ export class OSDashboardSettingTab extends PluginSettingTab {
       { id: "general", label: "General", icon: "settings" },
       { id: "navigation", label: "Navigation", icon: "folder-tree" },
       { id: "widgets", label: "Widgets", icon: "layout-grid" },
-      { id: "streaks", label: "Streaks & Rail", icon: "flame" },
       { id: "tasks-projects", label: "Tasks & Projects", icon: "check-square" },
+      { id: "streaks", label: "Streaks & Rail", icon: "flame" },
       { id: "bookmarks", label: "Bookmarks", icon: "bookmark" }
     ];
 
@@ -61,11 +61,11 @@ export class OSDashboardSettingTab extends PluginSettingTab {
       case "widgets":
         this.renderWidgetsTab(tabContent);
         break;
-      case "streaks":
-        this.renderStreaksRailTab(tabContent);
-        break;
       case "tasks-projects":
         this.renderTasksProjectsTab(tabContent);
+        break;
+      case "streaks":
+        this.renderStreaksRailTab(tabContent);
         break;
       case "bookmarks":
         this.renderBookmarksTab(tabContent);
@@ -101,14 +101,28 @@ export class OSDashboardSettingTab extends PluginSettingTab {
           });
       });
 
+    new Setting(container)
+      .setName("Mobile Top Space / Margin")
+      .setDesc("Top spacing in pixels applied on mobile to keep the dashboard below the mobile notification bar and Obsidian UI (in portrait & landscape).")
+      .addSlider(slider => {
+        slider
+          .setLimits(0, 120, 2)
+          .setValue(this.plugin.settings.mobileTopMargin ?? 48)
+          .setDynamicTooltip()
+          .onChange(async (val) => {
+            this.plugin.settings.mobileTopMargin = val;
+            await this.plugin.saveSettings();
+          });
+      });
+
     container.createEl("h3", { text: "Hero Identity & Appearance" });
 
     new Setting(container)
       .setName("Vault Title")
-      .setDesc("Main title displayed in the hero banner (e.g. SSK_OS).")
+      .setDesc("Main title displayed in the hero banner. Leave blank to automatically use your vault name.")
       .addText(text => {
-        text.setPlaceholder("SSK_OS")
-          .setValue(this.plugin.settings.vaultTitle)
+        text.setPlaceholder(this.app.vault.getName() || "Vault Name")
+          .setValue(this.plugin.settings.vaultTitle || "")
           .onChange(async (val) => {
             this.plugin.settings.vaultTitle = val;
             await this.plugin.saveSettings();
@@ -217,17 +231,50 @@ export class OSDashboardSettingTab extends PluginSettingTab {
           });
       });
 
-    new Setting(container)
-      .setName("New Note Naming Pattern")
-      .setDesc("Moment.js date format for new files created when clicking folders without a Home note (e.g. YYYY-MM-DD HH-mm).")
-      .addText(text => {
-        text.setPlaceholder("YYYY-MM-DD HH-mm")
-          .setValue(this.plugin.settings.newFilePattern)
-          .onChange(async (val) => {
-            this.plugin.settings.newFilePattern = val.trim() || "YYYY-MM-DD HH-mm";
-            await this.plugin.saveSettings();
-          });
+    const dailyFormat = getDailyNotesFormat(this.app);
+    const initialPattern = this.plugin.settings.newFilePattern || "";
+
+    const newNoteSetting = new Setting(container)
+      .setName("New Note Naming Pattern");
+
+    const updatePatternDesc = (val: string) => {
+      const clean = val.trim();
+      newNoteSetting.descEl.empty();
+      const refLink = newNoteSetting.descEl.createEl("a", {
+        text: "Syntax reference",
+        href: "https://momentjs.com/docs/#/displaying/format/"
       });
+      refLink.setAttr("target", "_blank");
+
+      if (clean) {
+        try {
+          const preview = moment().format(clean);
+          newNoteSetting.descEl.createSpan({ text: `. Your current syntax looks like: ` });
+          newNoteSetting.descEl.createEl("b", { text: preview });
+        } catch (e) {
+          newNoteSetting.descEl.createSpan({ text: `. Invalid syntax format` });
+        }
+      } else {
+        const examplePreview = moment().format(dailyFormat || "YYYY-MM-DD");
+        newNoteSetting.descEl.createSpan({ text: `. e.g. ${examplePreview}` });
+      }
+    };
+
+    updatePatternDesc(initialPattern);
+
+    newNoteSetting.addText(text => {
+      text.setPlaceholder(dailyFormat || "YYYY-MM-DD")
+        .setValue(initialPattern)
+        .onChange(async (val) => {
+          this.plugin.settings.newFilePattern = val.trim();
+          updatePatternDesc(val);
+          await this.plugin.saveSettings();
+        });
+      text.inputEl.addEventListener("input", () => {
+        updatePatternDesc(text.inputEl.value);
+      });
+      text.inputEl.style.width = "220px";
+    });
 
     new Setting(container)
       .setName("Ignored Navigation Folders")
@@ -240,19 +287,184 @@ export class OSDashboardSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           });
       });
+
+    // =========================================================================
+    // FOLDER ICONS & COLOR OVERRIDES
+    // =========================================================================
+    container.createEl("h3", { text: "Folder Icons & Color Overrides" });
+
+    const overrideDesc = container.createEl("p", {
+      text: "Customize the icon and color for each folder in your Navigation Ribbon and across the dashboard. If you previously used the Obsidian Iconize plugin, you can import your existing colors and icons with one click.",
+      cls: "setting-item-description"
+    });
+    overrideDesc.style.marginBottom = "14px";
+
+    // Action buttons bar
+    new Setting(container)
+      .setName("Iconize Migration & Quick Actions")
+      .setDesc("Import folder icons and colors from obsidian-iconize, or manage custom overrides.")
+      .addButton(btn => {
+        btn.setButtonText("Import from Iconize")
+          .setIcon("download")
+          .setCta()
+          .onClick(async () => {
+            const result = await this.plugin.iconService.importFromIconize();
+            if (result.count === 0) {
+              new Notice("No Iconize data found. Ensure obsidian-iconize was installed or data.json exists.");
+              return;
+            }
+            if (!this.plugin.settings.folderOverrides) {
+              this.plugin.settings.folderOverrides = {};
+            }
+            this.plugin.settings.folderOverrides = Object.assign({}, this.plugin.settings.folderOverrides, result.overrides);
+            await this.plugin.saveSettings();
+            new Notice(`Successfully imported ${result.count} folder styles from Iconize!`);
+            this.display();
+          });
+      })
+      .addButton(btn => {
+        btn.setButtonText("Reset All Overrides")
+          .setClass("os-btn-danger")
+          .onClick(async () => {
+            this.plugin.settings.folderOverrides = {};
+            await this.plugin.saveSettings();
+            new Notice("All folder icon & color overrides have been reset.");
+            this.display();
+          });
+      });
+
+    // Render list of active navigation folders
+    const folderCards = this.plugin.navigationService.getFolderCards(this.plugin.settings);
+    const overrides = this.plugin.settings.folderOverrides || {};
+
+    const foldersListContainer = container.createDiv({ cls: "os-folder-overrides-list" });
+
+    if (folderCards.length === 0) {
+      foldersListContainer.createEl("p", {
+        text: "No navigation folders detected. Create folders in your vault root or adjust your ignored folders filter.",
+        cls: "os-empty-state-text"
+      });
+    }
+
+    for (const card of folderCards) {
+      const existing = overrides[card.path] || overrides[card.name];
+      const resolved = card.resolvedIcon;
+
+      const itemEl = foldersListContainer.createDiv({ cls: "os-folder-override-item" });
+
+      // Left info: folder name & icon preview
+      const leftCol = itemEl.createDiv({ cls: "os-folder-override-left" });
+      const iconWrap = leftCol.createDiv({ cls: "os-folder-override-icon-wrap" });
+      this.plugin.iconService.renderIcon(iconWrap, resolved);
+
+      const labelWrap = leftCol.createDiv({ cls: "os-folder-override-label-wrap" });
+      labelWrap.createDiv({ cls: "os-folder-override-title", text: card.name });
+      labelWrap.createDiv({ cls: "os-folder-override-sub", text: card.path });
+
+      // Middle: Icon Input
+      const iconInputCol = itemEl.createDiv({ cls: "os-folder-override-input-col" });
+      const iconInput = iconInputCol.createEl("input", {
+        type: "text",
+        cls: "os-folder-override-icon-input",
+        placeholder: resolved.type === "emoji" ? resolved.value : (resolved.value || "folder")
+      });
+      iconInput.value = existing?.icon || "";
+      iconInput.setAttribute("title", "Lucide icon name (e.g. book-open, flame) or Emoji (e.g. 📚)");
+
+      // Right: Color Picker
+      const colorCol = itemEl.createDiv({ cls: "os-folder-override-color-col" });
+      const nativeColor = colorCol.createEl("input", {
+        type: "color",
+        cls: "os-folder-override-color-native"
+      });
+      const activeColor = existing?.color || resolved.color || "#3b82f6";
+      nativeColor.value = activeColor.startsWith("#") && activeColor.length === 7 ? activeColor : "#3b82f6";
+
+      const hexInput = colorCol.createEl("input", {
+        type: "text",
+        cls: "os-folder-override-hex-input"
+      });
+      hexInput.value = existing?.color || "";
+      hexInput.placeholder = activeColor;
+
+      const saveFolder = async (newIcon?: string, newColor?: string) => {
+        if (!this.plugin.settings.folderOverrides) {
+          this.plugin.settings.folderOverrides = {};
+        }
+        const current = this.plugin.settings.folderOverrides[card.path] || {};
+        if (newIcon !== undefined) current.icon = newIcon.trim() || undefined;
+        if (newColor !== undefined) current.color = newColor.trim() || undefined;
+
+        if (!current.icon && !current.color) {
+          delete this.plugin.settings.folderOverrides[card.path];
+          delete this.plugin.settings.folderOverrides[card.name];
+        } else {
+          this.plugin.settings.folderOverrides[card.path] = current;
+        }
+
+        await this.plugin.saveSettings();
+        // Update live preview in row
+        const updatedResolved = this.plugin.iconService.resolveFolderIcon(card.path, card.name, 0, this.plugin.settings);
+        this.plugin.iconService.renderIcon(iconWrap, updatedResolved);
+      };
+
+      iconInput.addEventListener("change", async () => {
+        await saveFolder(iconInput.value, hexInput.value);
+      });
+
+      nativeColor.addEventListener("input", async () => {
+        hexInput.value = nativeColor.value;
+        await saveFolder(iconInput.value, nativeColor.value);
+      });
+
+      hexInput.addEventListener("change", async () => {
+        const val = hexInput.value.trim();
+        if (/^#[0-9a-fA-F]{6}$/.test(val)) {
+          nativeColor.value = val;
+        }
+        await saveFolder(iconInput.value, val);
+      });
+
+      // Quick palette swatch drop
+      const swatchesWrap = colorCol.createDiv({ cls: "os-mini-swatches" });
+      for (const hex of IconService.COLOR_PALETTE.slice(0, 6)) {
+        const swatch = swatchesWrap.createDiv({ cls: "os-mini-swatch" });
+        swatch.style.backgroundColor = hex;
+        swatch.setAttribute("title", hex);
+        swatch.addEventListener("click", async () => {
+          nativeColor.value = hex;
+          hexInput.value = hex;
+          await saveFolder(iconInput.value, hex);
+        });
+      }
+
+      // Reset button
+      const resetBtn = itemEl.createEl("button", {
+        cls: "os-folder-override-reset-btn",
+        title: "Reset this folder to default icon & color"
+      });
+      setIcon(resetBtn, "rotate-ccw");
+      resetBtn.addEventListener("click", async () => {
+        if (this.plugin.settings.folderOverrides) {
+          delete this.plugin.settings.folderOverrides[card.path];
+          delete this.plugin.settings.folderOverrides[card.name];
+        }
+        await this.plugin.saveSettings();
+        this.display();
+      });
+    }
   }
 
   // =========================================================================
   // 3. WIDGETS MANAGER TAB
   // =========================================================================
   private renderWidgetsTab(container: HTMLElement): void {
-    container.createEl("h3", { text: "Built-in Widgets Visibility" });
-
-    const descEl = container.createEl("p", {
-      text: "Toggle which sections appear on your dashboard. Hidden widgets leave no empty gaps; active columns adjust automatically.",
+    container.createEl("h3", { text: "Header & Navigation Visibility" });
+    const descTop = container.createEl("p", {
+      text: "Toggle top-level hero banner and folder navigation bar on your dashboard.",
       cls: "setting-item-description"
     });
-    descEl.style.marginBottom = "14px";
+    descTop.style.marginBottom = "14px";
 
     new Setting(container)
       .setName("Hero Banner")
@@ -276,77 +488,30 @@ export class OSDashboardSettingTab extends PluginSettingTab {
           });
       });
 
-    new Setting(container)
-      .setName("Daily Tasks (Plan & Log)")
-      .setDesc("Daily task checklist with switchable Plan and Log tabs, and date-schedule popup.")
-      .addToggle(toggle => {
-        toggle.setValue(this.plugin.settings.showTodayTasks ?? true)
-          .onChange(async (val) => {
-            this.plugin.settings.showTodayTasks = val;
-            await this.plugin.saveSettings();
-          });
-      });
+    container.createEl("h3", { text: "Main Grid Default Widgets" });
+    const descMain = container.createEl("p", {
+      text: "Customize title, Lucide icon, accent color, and optional subtitle description for each built-in main card.",
+      cls: "setting-item-description"
+    });
+    descMain.style.marginBottom = "14px";
 
-    new Setting(container)
-      .setName("Weekly Planning")
-      .setDesc("Overview of high-level weekly priorities.")
-      .addToggle(toggle => {
-        toggle.setValue(this.plugin.settings.showWeeklyTasks ?? true)
-          .onChange(async (val) => {
-            this.plugin.settings.showWeeklyTasks = val;
-            await this.plugin.saveSettings();
-          });
-      });
-
-    new Setting(container)
-      .setName("Recent Notes")
-      .setDesc("List of recently modified notes with parent folder badges.")
-      .addToggle(toggle => {
-        toggle.setValue(this.plugin.settings.showRecentNotes ?? true)
-          .onChange(async (val) => {
-            this.plugin.settings.showRecentNotes = val;
-            await this.plugin.saveSettings();
-          });
-      });
-
-    new Setting(container)
-      .setName("Quick Capture")
-      .setDesc("Instant note capture input box sending to your inbox folder.")
-      .addToggle(toggle => {
-        toggle.setValue(this.plugin.settings.showQuickCapture ?? true)
-          .onChange(async (val) => {
-            this.plugin.settings.showQuickCapture = val;
-            await this.plugin.saveSettings();
-          });
-      });
-
-    new Setting(container)
-      .setName("Ongoing Projects")
-      .setDesc("Active projects tracked by status and auto-calculated task progress.")
-      .addToggle(toggle => {
-        toggle.setValue(this.plugin.settings.showOngoingProjects ?? true)
-          .onChange(async (val) => {
-            this.plugin.settings.showOngoingProjects = val;
-            await this.plugin.saveSettings();
-          });
-      });
-
-    new Setting(container)
-      .setName("Bookmarks & Links")
-      .setDesc("Grid of external resources and key internal notes.")
-      .addToggle(toggle => {
-        toggle.setValue(this.plugin.settings.showBookmarks ?? true)
-          .onChange(async (val) => {
-            this.plugin.settings.showBookmarks = val;
-            await this.plugin.saveSettings();
-          });
-      });
+    this.renderDefaultWidgetCard(container, "todayTasks", "Daily Tasks (Plan & Log)", "Daily", "check-circle", "showTodayTasks", "#8b5cf6");
+    this.renderDefaultWidgetCard(container, "weeklyTasks", "Weekly Planning", "This Week", "calendar", "showWeeklyTasks", "#8b5cf6");
+    this.renderDefaultWidgetCard(container, "recentNotes", "Recent Notes", "Recent Notes", "file-text", "showRecentNotes", "#8b5cf6");
+    this.renderDefaultWidgetCard(container, "quickCapture", "Quick Capture", "Quick Capture", "edit-3", "showQuickCapture", "#8b5cf6");
+    this.renderDefaultWidgetCard(container, "ongoingProjects", "Ongoing Projects", "Ongoing Projects", "target", "showOngoingProjects", "#8b5cf6");
+    this.renderDefaultWidgetCard(container, "bookmarks", "Bookmarks & Links", "Links", "link-2", "showBookmarks", "#8b5cf6");
 
     container.createEl("h3", { text: "Right Side Companion Rail Widgets" });
+    const descRail = container.createEl("p", {
+      text: "Companion rail on the right side containing Calendar, Graph view, Streaks tracker, and Quote card.",
+      cls: "setting-item-description"
+    });
+    descRail.style.marginBottom = "14px";
 
     new Setting(container)
       .setName("Enable Right Side Rail")
-      .setDesc("Companion rail on the right side containing Calendar, Graph view, Streaks, and Quote.")
+      .setDesc("Master toggle to show or hide the entire right companion rail.")
       .addToggle(toggle => {
         toggle.setValue(this.plugin.settings.showRightRail ?? true)
           .onChange(async (val) => {
@@ -355,49 +520,10 @@ export class OSDashboardSettingTab extends PluginSettingTab {
           });
       });
 
-    new Setting(container)
-      .setName("Calendar Widget")
-      .setDesc("Interactive mini calendar with current date indicator and daily note integration.")
-      .addToggle(toggle => {
-        toggle.setValue(this.plugin.settings.showCalendar ?? true)
-          .onChange(async (val) => {
-            this.plugin.settings.showCalendar = val;
-            await this.plugin.saveSettings();
-          });
-      });
-
-    new Setting(container)
-      .setName("Graph View Widget")
-      .setDesc("Interactive node graph view with direct folder navigation.")
-      .addToggle(toggle => {
-        toggle.setValue(this.plugin.settings.showGraphView ?? true)
-          .onChange(async (val) => {
-            this.plugin.settings.showGraphView = val;
-            await this.plugin.saveSettings();
-          });
-      });
-
-    new Setting(container)
-      .setName("Streaks Tracker Widget")
-      .setDesc("Habit streaks tracker synced with Daily Tasks and freeze support.")
-      .addToggle(toggle => {
-        toggle.setValue(this.plugin.settings.showStreaks ?? true)
-          .onChange(async (val) => {
-            this.plugin.settings.showStreaks = val;
-            await this.plugin.saveSettings();
-          });
-      });
-
-    new Setting(container)
-      .setName("Quote Widget")
-      .setDesc("Inspirational quote card at the bottom of the right rail.")
-      .addToggle(toggle => {
-        toggle.setValue(this.plugin.settings.showRightQuote ?? true)
-          .onChange(async (val) => {
-            this.plugin.settings.showRightQuote = val;
-            await this.plugin.saveSettings();
-          });
-      });
+    this.renderDefaultWidgetCard(container, "calendar", "Calendar Widget", "Calendar", "calendar", "showCalendar", "#8b5cf6");
+    this.renderDefaultWidgetCard(container, "graphView", "Graph View Widget", "Graph view", "git-fork", "showGraphView", "#8b5cf6");
+    this.renderDefaultWidgetCard(container, "streaks", "Streaks Tracker Widget", "Streaks", "flame", "showStreaks", "#f97316");
+    this.renderDefaultWidgetCard(container, "rightQuote", "Inspirational Quote Card", "Quote", "sparkles", "showRightQuote", "#8b5cf6");
 
     // Drag-and-drop & Layout Section
     container.createEl("h3", { text: "Widget Drag & Drop Layout" });
@@ -429,6 +555,151 @@ export class OSDashboardSettingTab extends PluginSettingTab {
 
     const customContainer = container.createDiv({ cls: "os-settings-custom-widgets" });
     this.renderCustomWidgetsList(customContainer);
+  }
+
+  private renderDefaultWidgetCard(
+    container: HTMLElement,
+    widgetId: string,
+    name: string,
+    defaultTitle: string,
+    defaultIcon: string,
+    visibilityKey: keyof OSDashboardSettings,
+    defaultColor?: string
+  ): void {
+    const card = container.createDiv({ cls: "os-settings-widget-card" });
+    const custom = (this.plugin.settings.widgetCustomizations = this.plugin.settings.widgetCustomizations || {});
+    const item = (custom[widgetId] = custom[widgetId] || {});
+
+    // Header row with toggle, name, and reset
+    new Setting(card)
+      .setName(name)
+      .addToggle(t => {
+        t.setTooltip("Enable/Disable")
+          .setValue((this.plugin.settings[visibilityKey] as boolean) ?? true)
+          .onChange(async (val) => {
+            (this.plugin.settings as any)[visibilityKey] = val;
+            await this.plugin.saveSettings();
+          });
+      })
+      .addButton(btn => {
+        btn.setIcon("rotate-ccw")
+          .setTooltip("Reset appearance to default")
+          .onClick(async () => {
+            delete custom[widgetId];
+            await this.plugin.saveSettings();
+            this.display();
+          });
+      });
+
+    // Title & Icon Row
+    new Setting(card)
+      .setName("Title & Icon")
+      .setDesc(`Card title and Lucide icon (defaults: "${defaultTitle}", "${defaultIcon}").`)
+      .addText(text => {
+        text.setPlaceholder(defaultTitle)
+          .setValue(item.title || "")
+          .onChange(async (val) => {
+            item.title = val.trim() || undefined;
+            await this.plugin.saveSettings();
+          });
+      })
+      .addText(text => {
+        text.setPlaceholder(defaultIcon)
+          .setValue(item.icon || "")
+          .onChange(async (val) => {
+            item.icon = val.trim() || undefined;
+            await this.plugin.saveSettings();
+          });
+      });
+
+    // Description Row
+    new Setting(card)
+      .setName("Description (Optional)")
+      .setDesc("Subtitle shown under the card header.")
+      .addText(text => {
+        text.setPlaceholder("Subtitle / description")
+          .setValue(item.description || "")
+          .onChange(async (val) => {
+            item.description = val.trim() || undefined;
+            await this.plugin.saveSettings();
+          });
+        text.inputEl.style.width = "100%";
+      });
+
+    // Icon Color Row
+    const colorSetting = new Setting(card)
+      .setName("Icon Color")
+      .setDesc("Accent color for this widget's header icon.");
+
+    const colorWrapper = colorSetting.controlEl.createDiv({ cls: "os-folder-override-color-col" });
+    colorWrapper.style.display = "flex";
+    colorWrapper.style.alignItems = "center";
+    colorWrapper.style.gap = "8px";
+
+    const nativeColor = colorWrapper.createEl("input", {
+      type: "color",
+      cls: "os-color-picker-input"
+    });
+    nativeColor.value = item.color || defaultColor || "#8b5cf6";
+    nativeColor.style.width = "32px";
+    nativeColor.style.height = "28px";
+    nativeColor.style.padding = "0";
+    nativeColor.style.border = "none";
+    nativeColor.style.cursor = "pointer";
+    nativeColor.style.borderRadius = "4px";
+
+    const hexInput = colorWrapper.createEl("input", {
+      type: "text",
+      cls: "os-color-hex-input"
+    });
+    hexInput.placeholder = defaultColor || "#8b5cf6";
+    hexInput.value = item.color || "";
+    hexInput.style.width = "85px";
+
+    const saveColor = async (colorVal: string) => {
+      item.color = colorVal.trim() || undefined;
+      await this.plugin.saveSettings();
+    };
+
+    nativeColor.addEventListener("input", async () => {
+      hexInput.value = nativeColor.value;
+      await saveColor(nativeColor.value);
+    });
+
+    hexInput.addEventListener("change", async () => {
+      const val = hexInput.value.trim();
+      if (/^#[0-9a-fA-F]{6}$/.test(val)) {
+        nativeColor.value = val;
+      }
+      await saveColor(val);
+    });
+
+    const swatchesWrap = colorWrapper.createDiv({ cls: "os-mini-swatches" });
+    for (const hex of IconService.COLOR_PALETTE.slice(0, 6)) {
+      const swatch = swatchesWrap.createDiv({ cls: "os-mini-swatch" });
+      swatch.style.backgroundColor = hex;
+      swatch.setAttribute("title", hex);
+      swatch.addEventListener("click", async () => {
+        nativeColor.value = hex;
+        hexInput.value = hex;
+        await saveColor(hex);
+      });
+    }
+
+    if (item.color) {
+      const resetColorBtn = colorWrapper.createEl("button", {
+        cls: "os-folder-override-reset-btn",
+        title: "Reset color to default"
+      });
+      setIcon(resetColorBtn, "rotate-ccw");
+      resetColorBtn.addEventListener("click", async () => {
+        delete item.color;
+        hexInput.value = "";
+        nativeColor.value = defaultColor || "#8b5cf6";
+        await this.plugin.saveSettings();
+        this.display();
+      });
+    }
   }
 
   private renderCustomWidgetsList(container: HTMLElement): void {
@@ -480,6 +751,95 @@ export class OSDashboardSettingTab extends PluginSettingTab {
             });
         });
 
+      // Widget Description (Optional)
+      new Setting(widgetCard)
+        .setName("Description (Optional)")
+        .setDesc("Subtitle or brief description shown under the card header.")
+        .addText(text => {
+          text.setPlaceholder("e.g. My active project notes")
+            .setValue(widget.description || "")
+            .onChange(async (val) => {
+              widget.description = val.trim() || undefined;
+              await this.plugin.saveSettings();
+            });
+          text.inputEl.style.width = "100%";
+        });
+
+      // Icon Color Setting
+      const colorSetting = new Setting(widgetCard)
+        .setName("Icon Color")
+        .setDesc("Accent color for this widget's header icon.");
+
+      const colorWrapper = colorSetting.controlEl.createDiv({ cls: "os-folder-override-color-col" });
+      colorWrapper.style.display = "flex";
+      colorWrapper.style.alignItems = "center";
+      colorWrapper.style.gap = "8px";
+
+      const nativeColor = colorWrapper.createEl("input", {
+        type: "color",
+        cls: "os-color-picker-input"
+      });
+      nativeColor.value = widget.color || "#8b5cf6";
+      nativeColor.style.width = "32px";
+      nativeColor.style.height = "28px";
+      nativeColor.style.padding = "0";
+      nativeColor.style.border = "none";
+      nativeColor.style.cursor = "pointer";
+      nativeColor.style.borderRadius = "4px";
+
+      const hexInput = colorWrapper.createEl("input", {
+        type: "text",
+        cls: "os-color-hex-input"
+      });
+      hexInput.placeholder = "#8b5cf6";
+      hexInput.value = widget.color || "";
+      hexInput.style.width = "85px";
+
+      const saveColor = async (colorVal: string) => {
+        widget.color = colorVal.trim() || undefined;
+        await this.plugin.saveSettings();
+      };
+
+      nativeColor.addEventListener("input", async () => {
+        hexInput.value = nativeColor.value;
+        await saveColor(nativeColor.value);
+      });
+
+      hexInput.addEventListener("change", async () => {
+        const val = hexInput.value.trim();
+        if (/^#[0-9a-fA-F]{6}$/.test(val)) {
+          nativeColor.value = val;
+        }
+        await saveColor(val);
+      });
+
+      const swatchesWrap = colorWrapper.createDiv({ cls: "os-mini-swatches" });
+      for (const hex of IconService.COLOR_PALETTE.slice(0, 6)) {
+        const swatch = swatchesWrap.createDiv({ cls: "os-mini-swatch" });
+        swatch.style.backgroundColor = hex;
+        swatch.setAttribute("title", hex);
+        swatch.addEventListener("click", async () => {
+          nativeColor.value = hex;
+          hexInput.value = hex;
+          await saveColor(hex);
+        });
+      }
+
+      if (widget.color) {
+        const resetColorBtn = colorWrapper.createEl("button", {
+          cls: "os-folder-override-reset-btn",
+          title: "Reset color to default"
+        });
+        setIcon(resetColorBtn, "rotate-ccw");
+        resetColorBtn.addEventListener("click", async () => {
+          delete widget.color;
+          hexInput.value = "";
+          nativeColor.value = "#8b5cf6";
+          await this.plugin.saveSettings();
+          this.renderCustomWidgetsList(container);
+        });
+      }
+
       new Setting(widgetCard)
         .setName("Column & Type")
         .setDesc("Target grid column and what content this widget renders.")
@@ -487,15 +847,32 @@ export class OSDashboardSettingTab extends PluginSettingTab {
           dd.addOption("1", "Column 1 (Left)")
             .addOption("2", "Column 2 (Center)")
             .addOption("3", "Column 3 (Right)")
+            .addOption("rail", "Right Rail (Companion)")
             .setValue(String(widget.column || 1))
             .onChange(async (val) => {
-              widget.column = parseInt(val, 10) as 1 | 2 | 3;
+              widget.column = val === "rail" ? "rail" : (parseInt(val, 10) as 1 | 2 | 3);
+              if (this.plugin.settings.widgetLayout) {
+                const cid = `custom-${widget.id}`;
+                const layout = this.plugin.settings.widgetLayout;
+                const colKeys: (keyof DashboardWidgetLayout)[] = ["col1", "col2", "col3", "rail"];
+                for (const k of colKeys) {
+                  if (Array.isArray(layout[k])) {
+                    layout[k] = layout[k].filter(id => id !== cid);
+                  }
+                }
+                const targetCol = widget.column === "rail" ? "rail" : (`col${widget.column}` as keyof DashboardWidgetLayout);
+                if (!Array.isArray(layout[targetCol])) {
+                  layout[targetCol] = [];
+                }
+                layout[targetCol].push(cid);
+              }
               await this.plugin.saveSettings();
             });
         })
         .addDropdown(dd => {
           dd.addOption("markdown-note", "Vault Note Embed")
             .addOption("custom-text", "Custom Markdown Text")
+            .addOption("dataview", "Dataview Query")
             .addOption("link-button", "Quick Link / Button")
             .setValue(widget.type || "markdown-note")
             .onChange(async (val: any) => {
@@ -505,37 +882,160 @@ export class OSDashboardSettingTab extends PluginSettingTab {
             });
         });
 
-      const contentSetting = new Setting(widgetCard).setName("Content / Target");
       if (widget.type === "markdown-note") {
-        contentSetting.setDesc("Path to a markdown file in your vault (e.g. Habits.md or Work/Goals.md).");
-        contentSetting.addText(t => {
-          t.setPlaceholder("path/to/note.md")
-            .setValue(widget.content)
-            .onChange(async (val) => {
-              widget.content = val.trim();
+        const contentSetting = new Setting(widgetCard)
+          .setName("Vault Note Path")
+          .setDesc("Path to a markdown file in your vault (suggests notes as you type).")
+          .addText(t => {
+            new FileSuggest(this.app, t.inputEl, async (file) => {
+              widget.content = file.path;
               await this.plugin.saveSettings();
             });
-        });
+            t.setPlaceholder("path/to/note.md")
+              .setValue(widget.content)
+              .onChange(async (val) => {
+                widget.content = val.trim();
+                await this.plugin.saveSettings();
+              });
+          });
       } else if (widget.type === "custom-text") {
-        contentSetting.setDesc("Custom markdown or text displayed inside the card.");
-        contentSetting.addTextArea(t => {
-          t.setPlaceholder("Type markdown or reminders...")
-            .setValue(widget.content)
-            .onChange(async (val) => {
-              widget.content = val;
+        const contentSetting = new Setting(widgetCard)
+          .setName("Custom Content")
+          .setDesc("Custom markdown or text displayed inside the card.")
+          .addTextArea(t => {
+            t.setPlaceholder("Type markdown or reminders...")
+              .setValue(widget.content)
+              .onChange(async (val) => {
+                widget.content = val;
+                await this.plugin.saveSettings();
+              });
+          });
+      } else if (widget.type === "dataview") {
+        new Setting(widgetCard)
+          .setName("Show Table Header")
+          .setDesc("Display the column header row at the top of the table.")
+          .addToggle(t => {
+            t.setValue(widget.showTableHeader !== false)
+              .onChange(async (val) => {
+                widget.showTableHeader = val;
+                await this.plugin.saveSettings();
+              });
+          });
+
+        const contentSetting = new Setting(widgetCard)
+          .setName("Dataview Query")
+          .setDesc("Dataview DQL query (e.g. TABLE file.mtime AS Modified FROM #project LIMIT 5) or dataviewjs script.")
+          .addTextArea(t => {
+            t.setPlaceholder("TABLE file.mtime AS Modified FROM #project SORT file.mtime DESC LIMIT 5")
+              .setValue(widget.content)
+              .onChange(async (val) => {
+                widget.content = val;
+                await this.plugin.saveSettings();
+              });
+            t.inputEl.rows = 4;
+            t.inputEl.style.fontFamily = "var(--font-monospace)";
+            t.inputEl.style.fontSize = "12px";
+          });
+      } else if (widget.type === "link-button") {
+        const buttonsSection = widgetCard.createDiv({ cls: "os-settings-buttons-section" });
+        new Setting(buttonsSection)
+          .setName("Buttons & Links")
+          .setDesc("Add multiple action buttons with custom labels and targets (URLs or [[Note]] links).");
+
+        // Normalize buttons array from existing widget.content if present
+        if (!widget.buttons || widget.buttons.length === 0) {
+          if (widget.content) {
+            widget.buttons = [{
+              id: Date.now().toString(),
+              label: widget.title || "Open",
+              target: widget.content
+            }];
+          } else {
+            widget.buttons = [{
+              id: Date.now().toString(),
+              label: "Open",
+              target: ""
+            }];
+          }
+        }
+
+        const buttonsContainer = buttonsSection.createDiv({ cls: "os-settings-buttons-list" });
+
+        const renderButtonsEditor = () => {
+          buttonsContainer.empty();
+          widget.buttons?.forEach((btnItem, bIdx) => {
+            const row = buttonsContainer.createDiv({ cls: "os-settings-btn-item" });
+
+            const labelInput = row.createEl("input", {
+              type: "text",
+              placeholder: "Label (e.g. Daily Tasks)"
+            });
+            labelInput.value = btnItem.label || "";
+            labelInput.style.flex = "1 1 120px";
+            labelInput.style.minWidth = "90px";
+            labelInput.addEventListener("change", async () => {
+              btnItem.label = labelInput.value.trim();
               await this.plugin.saveSettings();
             });
-        });
-      } else {
-        contentSetting.setDesc("URL (https://...) or Note name to open when clicked.");
-        contentSetting.addText(t => {
-          t.setPlaceholder("https://... or Note Title")
-            .setValue(widget.content)
-            .onChange(async (val) => {
-              widget.content = val.trim();
+
+            const iconInput = row.createEl("input", {
+              type: "text",
+              placeholder: "Icon (e.g. flame)"
+            });
+            iconInput.value = btnItem.icon || "";
+            iconInput.style.flex = "0 1 100px";
+            iconInput.style.minWidth = "70px";
+            iconInput.addEventListener("change", async () => {
+              btnItem.icon = iconInput.value.trim() || undefined;
               await this.plugin.saveSettings();
             });
-        });
+
+            const targetInput = row.createEl("input", {
+              type: "text",
+              placeholder: "https://... or [[Note]]"
+            });
+            targetInput.value = btnItem.target || "";
+            targetInput.style.flex = "2 1 180px";
+            targetInput.style.minWidth = "130px";
+            new WikiLinkSuggest(this.app, targetInput);
+            targetInput.addEventListener("change", async () => {
+              btnItem.target = targetInput.value.trim();
+              await this.plugin.saveSettings();
+            });
+
+            const delBtn = row.createEl("button", {
+              cls: "os-folder-override-reset-btn",
+              title: "Remove button"
+            });
+            setIcon(delBtn, "trash");
+            delBtn.addEventListener("click", async () => {
+              widget.buttons?.splice(bIdx, 1);
+              await this.plugin.saveSettings();
+              renderButtonsEditor();
+            });
+          });
+
+          const addBtnWrap = buttonsContainer.createDiv();
+          addBtnWrap.style.marginTop = "6px";
+          const addBtn = addBtnWrap.createEl("button", {
+            text: "+ Add Button",
+            cls: "mod-cta"
+          });
+          addBtn.style.fontSize = "12px";
+          addBtn.style.padding = "4px 10px";
+          addBtn.addEventListener("click", async () => {
+            if (!widget.buttons) widget.buttons = [];
+            widget.buttons.push({
+              id: Date.now().toString(),
+              label: "New Button",
+              target: ""
+            });
+            await this.plugin.saveSettings();
+            renderButtonsEditor();
+          });
+        };
+
+        renderButtonsEditor();
       }
     });
 
@@ -566,7 +1066,7 @@ export class OSDashboardSettingTab extends PluginSettingTab {
   // 4. TASKS & PROJECTS TAB
   // =========================================================================
   private renderTasksProjectsTab(container: HTMLElement): void {
-    container.createEl("h3", { text: "Task Files" });
+    container.createEl("h3", { text: "Daily & Weekly Task Files" });
 
     new Setting(container)
       .setName("Daily Tasks File (Plan)")
@@ -585,14 +1085,14 @@ export class OSDashboardSettingTab extends PluginSettingTab {
       });
 
     new Setting(container)
-      .setName("Daily Log File (What I Did)")
-      .setDesc("Path to the file containing what you actually did today (e.g. Daily Log.md).")
+      .setName("Daily Logs File (What I Did)")
+      .setDesc("Path to the file containing what you actually did today (e.g. Daily Logs.md).")
       .addText(text => {
         new FileSuggest(this.app, text.inputEl, async (file) => {
           this.plugin.settings.dailyLogFile = file.path;
           await this.plugin.saveSettings();
         });
-        text.setPlaceholder("Daily Log.md")
+        text.setPlaceholder("Daily Logs.md")
           .setValue(this.plugin.settings.dailyLogFile || "")
           .onChange(async (val) => {
             this.plugin.settings.dailyLogFile = val.trim();
@@ -602,7 +1102,7 @@ export class OSDashboardSettingTab extends PluginSettingTab {
 
     new Setting(container)
       .setName("Auto-Log Completed Tasks")
-      .setDesc("When you check off a planned task in 'What I had to do', automatically append it to your Daily Log.")
+      .setDesc("When you check off a planned task in 'What I had to do', automatically append it to your Daily Logs.")
       .addToggle(toggle => {
         toggle.setValue(this.plugin.settings.autoLogToDailyLog ?? true)
           .onChange(async (val) => {
@@ -623,54 +1123,6 @@ export class OSDashboardSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.weeklyTasksFile)
           .onChange(async (val) => {
             this.plugin.settings.weeklyTasksFile = val.trim();
-            await this.plugin.saveSettings();
-          });
-      });
-
-    container.createEl("h3", { text: "Habits & Streaks" });
-
-    new Setting(container)
-      .setName("Habits File")
-      .setDesc("Path to the markdown file storing your active habit streaks and callouts (e.g. Habits.md).")
-      .addText(text => {
-        new FileSuggest(this.app, text.inputEl, async (file) => {
-          this.plugin.settings.habitsFile = file.path;
-          await this.plugin.saveSettings();
-        });
-        text.setPlaceholder("Habits.md")
-          .setValue(this.plugin.settings.habitsFile || "Habits.md")
-          .onChange(async (val) => {
-            this.plugin.settings.habitsFile = val.trim() || "Habits.md";
-            await this.plugin.saveSettings();
-          });
-      });
-
-    new Setting(container)
-      .setName("Habits Archive File")
-      .setDesc("Path to the markdown file where archived habits are moved (e.g. 99 Archive/Habit.md). Created automatically if needed.")
-      .addText(text => {
-        new FileSuggest(this.app, text.inputEl, async (file) => {
-          this.plugin.settings.archiveHabitsFile = file.path;
-          await this.plugin.saveSettings();
-        });
-        text.setPlaceholder("99 Archive/Habit.md")
-          .setValue(this.plugin.settings.archiveHabitsFile || "99 Archive/Habit.md")
-          .onChange(async (val) => {
-            this.plugin.settings.archiveHabitsFile = val.trim() || "99 Archive/Habit.md";
-            await this.plugin.saveSettings();
-          });
-      });
-
-    new Setting(container)
-      .setName("Monthly Freeze Quota (Days)")
-      .setDesc("Maximum number of freeze days a habit can use per calendar month.")
-      .addText(text => {
-        text.inputEl.type = "number";
-        text.setPlaceholder("4")
-          .setValue(String(this.plugin.settings.maxFreezesPerMonth ?? 4))
-          .onChange(async (val) => {
-            const n = parseInt(val, 10);
-            this.plugin.settings.maxFreezesPerMonth = isNaN(n) ? 4 : Math.max(0, n);
             await this.plugin.saveSettings();
           });
       });
@@ -758,10 +1210,10 @@ export class OSDashboardSettingTab extends PluginSettingTab {
 
     new Setting(container)
       .setName("Excluded Folders")
-      .setDesc("Comma-separated folders to ignore in Recent Notes (e.g. Templates, .trash).")
+      .setDesc("Comma-separated folders to ignore in Recent Notes (e.g. _attachments, _scripts, _templates, Templates, .trash).")
       .addText(text => {
-        text.setPlaceholder("Templates, .trash")
-          .setValue(this.plugin.settings.recentNotesExcludeFolders.join(", "))
+        text.setPlaceholder("_attachments, _scripts, _templates, Templates, .trash")
+          .setValue((this.plugin.settings.recentNotesExcludeFolders || []).join(", "))
           .onChange(async (val) => {
             this.plugin.settings.recentNotesExcludeFolders = val.split(",").map(f => f.trim()).filter(Boolean);
             await this.plugin.saveSettings();
@@ -781,126 +1233,251 @@ export class OSDashboardSettingTab extends PluginSettingTab {
   private renderLinksSettings(container: HTMLElement): void {
     container.empty();
 
-    const links = this.plugin.settings.links || [];
-    links.forEach((link, idx) => {
-      const row = new Setting(container)
-        .setName(`Link #${idx + 1}: ${link.title}`)
-        .addText(titleText => {
-          titleText.setPlaceholder("Title")
-            .setValue(link.title)
-            .onChange(async (val) => {
-              link.title = val;
-              await this.plugin.saveSettings();
-            });
-        })
-        .addText(urlText => {
-          urlText.setPlaceholder("URL or Note Name")
-            .setValue(link.url)
-            .onChange(async (val) => {
-              link.url = val;
-              await this.plugin.saveSettings();
-            });
-        })
-        .addText(iconText => {
-          iconText.setPlaceholder("Icon (e.g. github)")
-            .setValue(link.icon)
-            .onChange(async (val) => {
-              link.icon = val;
-              await this.plugin.saveSettings();
-            });
-        })
-        .addButton(btn => {
-          btn.setIcon("trash")
-            .setTooltip("Delete Link")
-            .onClick(async () => {
-              this.plugin.settings.links.splice(idx, 1);
-              await this.plugin.saveSettings();
-              this.renderLinksSettings(container);
-            });
-        });
+    const desc = container.createEl("div", { cls: "setting-item-description" });
+    desc.style.marginBottom = "14px";
+    desc.style.lineHeight = "1.5";
+
+    const p1 = desc.createEl("p", {
+      text: "Drag and drop bookmarks using the grip handle to reorder them. Enter any web URL (https://...) or vault note (type [[ to auto-suggest notes)."
+    });
+    p1.style.marginBottom = "6px";
+
+    const p2 = desc.createEl("p");
+    p2.createSpan({
+      text: "Supported Icons: Supports all popular brands (e.g. "
+    });
+    const brandExamples = ["youtube", "instagram", "facebook", "twitter", "x", "github", "discord", "spotify", "reddit", "linkedin", "tiktok", "whatsapp"];
+    brandExamples.forEach((ex, i) => {
+      p2.createEl("code", { text: ex });
+      if (i < brandExamples.length - 1) p2.createSpan({ text: ", " });
+    });
+    p2.createSpan({
+      text: "), all 1,400+ Lucide icons (browse at "
+    });
+    const lucideLink = p2.createEl("a", { text: "lucide.dev/icons", href: "https://lucide.dev/icons" });
+    lucideLink.setAttr("target", "_blank");
+    p2.createSpan({
+      text: "), raw SVG markup (<svg ...>...</svg>), and emojis. Entering any valid icon name or SVG code will immediately render a live preview."
     });
 
-    new Setting(container)
-      .addButton(btn => {
-        btn.setButtonText("+ Add Bookmark Link")
-          .setCta()
-          .onClick(async () => {
-            this.plugin.settings.links.push({
-              id: Date.now().toString(),
-              title: "New Link",
-              url: "https://",
-              icon: "external-link"
-            });
-            await this.plugin.saveSettings();
-            this.renderLinksSettings(container);
-          });
+    const listContainer = container.createDiv({ cls: "os-settings-bookmarks-list" });
+    const links = this.plugin.settings.links || [];
+
+    let draggedIdx: number | null = null;
+
+    links.forEach((link, idx) => {
+      const row = listContainer.createDiv({ cls: "os-settings-bookmark-row" });
+      row.setAttribute("data-idx", String(idx));
+
+      // Drag handle
+      const dragHandle = row.createDiv({ cls: "os-settings-drag-handle" });
+      setIcon(dragHandle, "grip-vertical");
+      dragHandle.setAttribute("title", "Drag to reorder");
+
+      // Make row draggable
+      row.setAttribute("draggable", "true");
+
+      row.addEventListener("dragstart", (e: DragEvent) => {
+        const target = e.target as HTMLElement;
+        if (target.closest("input, button")) {
+          e.preventDefault();
+          return;
+        }
+        draggedIdx = idx;
+        row.addClass("is-dragging");
+        if (e.dataTransfer) {
+          e.dataTransfer.setData("text/plain", String(idx));
+          e.dataTransfer.effectAllowed = "move";
+        }
       });
+
+      row.addEventListener("dragend", () => {
+        row.removeClass("is-dragging");
+        listContainer.querySelectorAll(".os-drop-indicator-top, .os-drop-indicator-bottom").forEach(el => {
+          el.removeClass("os-drop-indicator-top");
+          el.removeClass("os-drop-indicator-bottom");
+        });
+      });
+
+      row.addEventListener("dragover", (e: DragEvent) => {
+        e.preventDefault();
+        if (draggedIdx === null || draggedIdx === idx) return;
+        if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+
+        const rect = row.getBoundingClientRect();
+        const midY = rect.top + rect.height / 2;
+        if (e.clientY < midY) {
+          row.addClass("os-drop-indicator-top");
+          row.removeClass("os-drop-indicator-bottom");
+        } else {
+          row.addClass("os-drop-indicator-bottom");
+          row.removeClass("os-drop-indicator-top");
+        }
+      });
+
+      row.addEventListener("dragleave", () => {
+        row.removeClass("os-drop-indicator-top");
+        row.removeClass("os-drop-indicator-bottom");
+      });
+
+      row.addEventListener("drop", async (e: DragEvent) => {
+        e.preventDefault();
+        row.removeClass("os-drop-indicator-top");
+        row.removeClass("os-drop-indicator-bottom");
+
+        if (draggedIdx === null || draggedIdx === idx) return;
+
+        const rect = row.getBoundingClientRect();
+        const midY = rect.top + rect.height / 2;
+        const insertAfter = e.clientY >= midY;
+
+        const movedItem = links.splice(draggedIdx, 1)[0];
+        let targetIdx = idx;
+        if (draggedIdx < idx && !insertAfter) {
+          targetIdx = idx - 1;
+        } else if (draggedIdx > idx && insertAfter) {
+          targetIdx = idx + 1;
+        }
+
+        links.splice(targetIdx, 0, movedItem);
+        this.plugin.settings.links = links;
+        await this.plugin.saveSettings();
+        this.renderLinksSettings(container);
+      });
+
+      // Icon preview badge
+      const iconPreview = row.createSpan({ cls: "os-settings-link-icon-preview" });
+      const updateIconPreview = (name: string) => {
+        this.plugin.iconService.renderAnyIcon(iconPreview, name, "external-link");
+      };
+      updateIconPreview(link.icon || "external-link");
+
+      // Title input
+      const titleInput = row.createEl("input", {
+        type: "text",
+        placeholder: "Title",
+        cls: "os-settings-bookmark-input os-bookmark-title-input"
+      });
+      titleInput.value = link.title || "";
+      titleInput.addEventListener("change", async () => {
+        link.title = titleInput.value.trim();
+        await this.plugin.saveSettings();
+      });
+
+      // URL or note input
+      const urlInput = row.createEl("input", {
+        type: "text",
+        placeholder: "https://... or [[Note]]",
+        cls: "os-settings-bookmark-input os-bookmark-url-input"
+      });
+      urlInput.value = link.url || "";
+      new WikiLinkSuggest(this.app, urlInput);
+      urlInput.addEventListener("change", async () => {
+        link.url = urlInput.value.trim();
+        await this.plugin.saveSettings();
+      });
+
+      // Icon name input
+      const iconInput = row.createEl("input", {
+        type: "text",
+        placeholder: "Icon (e.g. youtube, globe, bot)",
+        cls: "os-settings-bookmark-input os-bookmark-icon-input"
+      });
+      iconInput.value = link.icon || "";
+      iconInput.addEventListener("input", () => {
+        updateIconPreview(iconInput.value.trim());
+      });
+      iconInput.addEventListener("change", async () => {
+        link.icon = iconInput.value.trim();
+        updateIconPreview(link.icon);
+        await this.plugin.saveSettings();
+      });
+
+      // Delete button
+      const delBtn = row.createEl("button", {
+        cls: "os-folder-override-reset-btn os-bookmark-del-btn",
+        title: "Delete Bookmark"
+      });
+      setIcon(delBtn, "trash");
+      delBtn.addEventListener("click", async () => {
+        this.plugin.settings.links.splice(idx, 1);
+        await this.plugin.saveSettings();
+        this.renderLinksSettings(container);
+      });
+    });
+
+    const addBtnWrap = container.createDiv({ cls: "os-settings-add-bookmark-wrap" });
+    const addBtn = addBtnWrap.createEl("button", {
+      text: "+ Add Bookmark Link",
+      cls: "mod-cta"
+    });
+    addBtn.addEventListener("click", async () => {
+      this.plugin.settings.links.push({
+        id: Date.now().toString(),
+        title: "New Link",
+        url: "https://",
+        icon: "external-link"
+      });
+      await this.plugin.saveSettings();
+      this.renderLinksSettings(container);
+    });
   }
 
   // =========================================================================
-  // 6. STREAKS & RIGHT RAIL TAB
+  // 5. STREAKS & RIGHT RAIL TAB
   // =========================================================================
   private renderStreaksRailTab(container: HTMLElement): void {
-    container.createEl("h3", { text: "Right Side Companion Rail Widgets" });
+    // 1. Habit Streaks Configuration
+    container.createEl("h3", { text: "Habit Streaks Configuration" });
 
     new Setting(container)
-      .setName("Enable Right Side Rail")
-      .setDesc("Toggle visibility of the right companion rail containing Calendar, Graph view, Streaks, and Quote.")
-      .addToggle(toggle => {
-        toggle.setValue(this.plugin.settings.showRightRail ?? true)
+      .setName("Habits File")
+      .setDesc("Path to the markdown file storing your active habit streaks and callouts (e.g. Habits.md).")
+      .addText(text => {
+        new FileSuggest(this.app, text.inputEl, async (file) => {
+          this.plugin.settings.habitsFile = file.path;
+          await this.plugin.saveSettings();
+        });
+        text.setPlaceholder("Habits.md")
+          .setValue(this.plugin.settings.habitsFile || "Habits.md")
           .onChange(async (val) => {
-            this.plugin.settings.showRightRail = val;
+            this.plugin.settings.habitsFile = val.trim() || "Habits.md";
             await this.plugin.saveSettings();
           });
       });
 
     new Setting(container)
-      .setName("Calendar Widget")
-      .setDesc("Interactive monthly calendar with quick jump to daily notes.")
-      .addToggle(toggle => {
-        toggle.setValue(this.plugin.settings.showCalendar ?? true)
+      .setName("Habits Archive File")
+      .setDesc("Path to the markdown file where archived habits are moved (e.g. 99 Archive/Habits.md). Created automatically if needed.")
+      .addText(text => {
+        new FileSuggest(this.app, text.inputEl, async (file) => {
+          this.plugin.settings.archiveHabitsFile = file.path;
+          await this.plugin.saveSettings();
+        });
+        text.setPlaceholder("99 Archive/Habits.md")
+          .setValue(this.plugin.settings.archiveHabitsFile || "99 Archive/Habits.md")
           .onChange(async (val) => {
-            this.plugin.settings.showCalendar = val;
+            this.plugin.settings.archiveHabitsFile = val.trim() || "99 Archive/Habits.md";
             await this.plugin.saveSettings();
           });
       });
 
     new Setting(container)
-      .setName("Graph View Widget")
-      .setDesc("Vault node graph widget with direct link navigation.")
+      .setName("Auto-Freeze Missed Habits")
+      .setDesc("Automatically use an available freeze from the habit's quota if you miss completing it, protecting your streak from resetting.")
       .addToggle(toggle => {
-        toggle.setValue(this.plugin.settings.showGraphView ?? true)
+        toggle
+          .setValue(this.plugin.settings.autoFreezeHabits ?? true)
           .onChange(async (val) => {
-            this.plugin.settings.showGraphView = val;
+            this.plugin.settings.autoFreezeHabits = val;
             await this.plugin.saveSettings();
+            if (val) {
+              await this.plugin.runAutoFreeze();
+            }
           });
       });
 
-    new Setting(container)
-      .setName("Streaks Tracker Widget")
-      .setDesc("Habit streak counter synced with Daily Tasks and freeze protection.")
-      .addToggle(toggle => {
-        toggle.setValue(this.plugin.settings.showStreaks ?? true)
-          .onChange(async (val) => {
-            this.plugin.settings.showStreaks = val;
-            await this.plugin.saveSettings();
-          });
-      });
-
-    new Setting(container)
-      .setName("Quote Widget")
-      .setDesc("Motivational quote card at the bottom of the right rail.")
-      .addToggle(toggle => {
-        toggle.setValue(this.plugin.settings.showRightQuote ?? true)
-          .onChange(async (val) => {
-            this.plugin.settings.showRightQuote = val;
-            await this.plugin.saveSettings();
-          });
-      });
-
-    // =======================================================================
-    // Calendar Events File (.md) Section
-    // =======================================================================
+    // 2. Calendar Events File (.md) Section
     container.createEl("h3", { text: "Calendar Events File (.md)" });
     new Setting(container)
       .setName("Events File")
@@ -918,9 +1495,7 @@ export class OSDashboardSettingTab extends PluginSettingTab {
           });
       });
 
-    // =======================================================================
-    // Google Calendar Integration Section
-    // =======================================================================
+    // 3. Google Calendar Integration Section
     container.createEl("h3", { text: "Google Calendar Integration" });
     const calDesc = container.createEl("p", {
       cls: "setting-item-description",
@@ -928,41 +1503,189 @@ export class OSDashboardSettingTab extends PluginSettingTab {
     });
     calDesc.style.marginBottom = "14px";
 
+    const isKeychainSupported = this.plugin.calendarService.isKeychainAvailable();
+    const SecretComponentClass = (obsidian as any).SecretComponent;
+    const useKeychain = Boolean(
+      this.plugin.settings.googleCalendarUseKeychain ||
+      (isKeychainSupported && Boolean(this.plugin.settings.googleCalendarSecretId))
+    );
+
     new Setting(container)
-      .setName("Google Calendar Address (Private iCal URL)")
-      .setDesc("In Google Calendar on the Web, go to Settings > Your Calendar > 'Secret address in iCal format' and paste the URL here.")
-      .addText(text => {
-        text.setPlaceholder("https://calendar.google.com/calendar/ical/.../basic.ics")
-          .setValue(this.plugin.settings.googleCalendarUrl || "")
+      .setName("Use Obsidian Keychain (SecretStorage)")
+      .setDesc(
+        isKeychainSupported
+          ? "Store your private Google Calendar iCal address securely in Obsidian Keychain instead of plaintext in settings."
+          : "Obsidian Keychain (SecretStorage) is supported in Obsidian v1.11.4+. You are currently using direct URL storage."
+      )
+      .addToggle(toggle => {
+        toggle.setValue(useKeychain)
+          .setDisabled(!isKeychainSupported)
           .onChange(async (val) => {
-            this.plugin.settings.googleCalendarUrl = val.trim();
+            this.plugin.settings.googleCalendarUseKeychain = val;
             await this.plugin.saveSettings();
+            this.display();
           });
-        text.inputEl.style.width = "260px";
-      })
-      .addButton(btn => {
-        btn.setButtonText("Sync Events Now")
-          .setCta()
-          .onClick(async () => {
-            const url = this.plugin.settings.googleCalendarUrl;
-            if (!url) {
-              new Notice("Please enter a Google Calendar iCal address first.");
-              return;
-            }
-            btn.setButtonText("Syncing...");
-            btn.setDisabled(true);
-            try {
-              const events = await this.plugin.calendarService.fetchEvents(url);
-              this.plugin.settings.cachedCalendarEvents = events;
-              this.plugin.settings.lastCalendarSyncTime = Date.now();
+      });
+
+    if (useKeychain && isKeychainSupported) {
+      if (SecretComponentClass) {
+        new Setting(container)
+          .setName("Keychain Secret")
+          .setDesc("Select an existing secret or click '+' to create a secret containing your Google Calendar .ics URL.")
+          .addComponent(cb => {
+            const comp = new SecretComponentClass(this.app, cb);
+            comp.setValue(this.plugin.settings.googleCalendarSecretId || "")
+              .onChange(async (val: string) => {
+                this.plugin.settings.googleCalendarSecretId = val;
+                await this.plugin.saveSettings();
+              });
+            return comp;
+          })
+          .addButton(btn => {
+            btn.setButtonText("Sync Events Now")
+              .setCta()
+              .onClick(async () => {
+                const url = this.plugin.calendarService.getCalendarUrl(this.plugin.settings);
+                if (!url) {
+                  new Notice("No secret selected or secret is empty in Obsidian Keychain.");
+                  return;
+                }
+                btn.setButtonText("Syncing...");
+                btn.setDisabled(true);
+                try {
+                  const events = await this.plugin.calendarService.fetchEvents(url);
+                  this.plugin.settings.cachedCalendarEvents = events;
+                  this.plugin.settings.lastCalendarSyncTime = Date.now();
+                  await this.plugin.saveSettings();
+                  new Notice(`✅ Synced ${events.length} Google Calendar event${events.length === 1 ? "" : "s"} from Keychain!`);
+                } catch (err: any) {
+                  new Notice(`❌ Failed to sync: ${err.message || "Invalid iCal URL or network error"}`);
+                } finally {
+                  btn.setButtonText("Sync Events Now");
+                  btn.setDisabled(false);
+                }
+              });
+          });
+      } else {
+        new Setting(container)
+          .setName("Keychain Secret Identifier")
+          .setDesc("Enter the name of your secret in Obsidian Keychain.")
+          .addText(text => {
+            text.setPlaceholder("e.g. google-calendar-url")
+              .setValue(this.plugin.settings.googleCalendarSecretId || "")
+              .onChange(async (val) => {
+                this.plugin.settings.googleCalendarSecretId = val.trim();
+                await this.plugin.saveSettings();
+              });
+          })
+          .addButton(btn => {
+            btn.setButtonText("Sync Events Now")
+              .setCta()
+              .onClick(async () => {
+                const url = this.plugin.calendarService.getCalendarUrl(this.plugin.settings);
+                if (!url) {
+                  new Notice("No secret configured or secret is empty in Obsidian Keychain.");
+                  return;
+                }
+                btn.setButtonText("Syncing...");
+                btn.setDisabled(true);
+                try {
+                  const events = await this.plugin.calendarService.fetchEvents(url);
+                  this.plugin.settings.cachedCalendarEvents = events;
+                  this.plugin.settings.lastCalendarSyncTime = Date.now();
+                  await this.plugin.saveSettings();
+                  new Notice(`✅ Synced ${events.length} Google Calendar event${events.length === 1 ? "" : "s"} from Keychain!`);
+                } catch (err: any) {
+                  new Notice(`❌ Failed to sync: ${err.message || "Invalid iCal URL or network error"}`);
+                } finally {
+                  btn.setButtonText("Sync Events Now");
+                  btn.setDisabled(false);
+                }
+              });
+          });
+      }
+
+      const secretStorage = (this.app as any).secretStorage;
+      if (secretStorage && typeof secretStorage.setSecret === "function") {
+        let saveUrlInput = "";
+        new Setting(container)
+          .setName("Save New URL to Keychain")
+          .setDesc("Paste a new Google Calendar .ics URL to store it securely into Keychain as 'google-calendar-url'.")
+          .addText(text => {
+            text.setPlaceholder("https://calendar.google.com/calendar/ical/.../basic.ics")
+              .onChange(val => {
+                saveUrlInput = val.trim();
+              });
+            text.inputEl.style.width = "220px";
+          })
+          .addButton(btn => {
+            btn.setButtonText("Save to Keychain")
+              .onClick(async () => {
+                if (!saveUrlInput || (!saveUrlInput.startsWith("http://") && !saveUrlInput.startsWith("https://"))) {
+                  new Notice("Please enter a valid https:// URL.");
+                  return;
+                }
+                try {
+                  await secretStorage.setSecret("google-calendar-url", saveUrlInput);
+                  this.plugin.settings.googleCalendarSecretId = "google-calendar-url";
+                  this.plugin.settings.googleCalendarUrl = "";
+                  await this.plugin.saveSettings();
+                  new Notice("✅ Saved Google Calendar URL to Obsidian Keychain!");
+                  this.display();
+                } catch (err: any) {
+                  new Notice(`Failed to save to Keychain: ${err?.message || "Unknown error"}`);
+                }
+              });
+          });
+      }
+    } else {
+      new Setting(container)
+        .setName("Google Calendar Address (Private iCal URL)")
+        .setDesc("In Google Calendar on the Web, go to Settings > Your Calendar > 'Secret address in iCal format' and paste the URL here.")
+        .addText(text => {
+          text.setPlaceholder("https://calendar.google.com/calendar/ical/.../basic.ics")
+            .setValue(this.plugin.settings.googleCalendarUrl || "")
+            .onChange(async (val) => {
+              this.plugin.settings.googleCalendarUrl = val.trim();
               await this.plugin.saveSettings();
-              new Notice(`✅ Synced ${events.length} Google Calendar event${events.length === 1 ? "" : "s"}!`);
-            } catch (err: any) {
-              new Notice(`❌ Failed to sync: ${err.message || "Invalid iCal URL or network error"}`);
-            } finally {
-              btn.setButtonText("Sync Events Now");
-              btn.setDisabled(false);
-            }
+            });
+          text.inputEl.style.width = "260px";
+        })
+        .addButton(btn => {
+          btn.setButtonText("Sync Events Now")
+            .setCta()
+            .onClick(async () => {
+              const url = this.plugin.calendarService.getCalendarUrl(this.plugin.settings);
+              if (!url) {
+                new Notice("Please enter a Google Calendar iCal address first.");
+                return;
+              }
+              btn.setButtonText("Syncing...");
+              btn.setDisabled(true);
+              try {
+                const events = await this.plugin.calendarService.fetchEvents(url);
+                this.plugin.settings.cachedCalendarEvents = events;
+                this.plugin.settings.lastCalendarSyncTime = Date.now();
+                await this.plugin.saveSettings();
+                new Notice(`✅ Synced ${events.length} Google Calendar event${events.length === 1 ? "" : "s"}!`);
+              } catch (err: any) {
+                new Notice(`❌ Failed to sync: ${err.message || "Invalid iCal URL or network error"}`);
+              } finally {
+                btn.setButtonText("Sync Events Now");
+                btn.setDisabled(false);
+              }
+            });
+        });
+    }
+
+    new Setting(container)
+      .setName("Show Connect Banner on Calendar Widget")
+      .setDesc("Display the banner prompt to add a Google Calendar address when no address is set.")
+      .addToggle(toggle => {
+        toggle.setValue(this.plugin.settings.showGoogleCalendarBanner ?? true)
+          .onChange(async (val) => {
+            this.plugin.settings.showGoogleCalendarBanner = val;
+            await this.plugin.saveSettings();
           });
       });
 
@@ -1003,6 +1726,7 @@ export class OSDashboardSettingTab extends PluginSettingTab {
           });
       });
 
+    // 4. Right Rail Quote Content
     container.createEl("h3", { text: "Right Rail Quote Content" });
 
     new Setting(container)
@@ -1026,136 +1750,6 @@ export class OSDashboardSettingTab extends PluginSettingTab {
           .onChange(async (val) => {
             this.plugin.settings.rightRailQuoteAuthor = val;
             await this.plugin.saveSettings();
-          });
-      });
-
-    container.createEl("h3", { text: "Habit Streaks Management" });
-    const streaksDesc = container.createEl("p", {
-      cls: "setting-item-description",
-      text: "Streaks automatically populate into your Daily Tasks.md under today's date (unless frozen). Checking them off in your daily tasks increments the streak. You can also freeze a streak for a few days to preserve your count while taking a break or vacation."
-    });
-    streaksDesc.style.marginBottom = "14px";
-
-    const streaksListContainer = container.createDiv({ cls: "os-settings-streaks-list" });
-    this.renderStreaksList(streaksListContainer);
-  }
-
-  private async renderStreaksList(container: HTMLElement): Promise<void> {
-    container.empty();
-
-    const habitsFilePath = this.plugin.settings.habitsFile || "Habits.md";
-    const archiveFilePath = this.plugin.settings.archiveHabitsFile || "99 Archive/Habit.md";
-    const maxFreezes = this.plugin.settings.maxFreezesPerMonth || 4;
-
-    const streaks = await this.plugin.streakService.loadHabits(habitsFilePath, this.plugin.settings.streaks || []);
-    this.plugin.settings.streaks = streaks;
-
-    streaks.forEach((streak) => {
-      const streakCard = container.createDiv({ cls: "os-settings-streak-card" });
-      streakCard.style.cssText = "display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; margin-bottom: 8px; border-radius: 8px; background: var(--background-secondary); border: 1px solid var(--background-modifier-border);";
-
-      const leftCol = streakCard.createDiv({ cls: "os-settings-streak-info" });
-      leftCol.style.cssText = "display: flex; align-items: center; gap: 10px;";
-
-      const iconSpan = leftCol.createSpan();
-      setIcon(iconSpan, streak.icon || "flame");
-      iconSpan.style.cssText = "color: var(--text-accent); display: flex; align-items: center;";
-
-      const titleWrapper = leftCol.createDiv();
-      titleWrapper.style.cssText = "display: flex; flex-direction: column; gap: 2px;";
-      const titleSpan = titleWrapper.createSpan({ text: streak.name });
-      titleSpan.style.fontWeight = "600";
-      if (streak.description) {
-        const descSpan = titleWrapper.createSpan({ text: streak.description });
-        descSpan.style.cssText = "font-size: 11px; color: var(--text-muted); font-weight: 400;";
-      }
-
-      const freq = streak.frequency || "daily";
-      const streakUnit = freq === "weekly"
-        ? (streak.currentStreak === 1 ? "wk" : "wks")
-        : freq === "monthly"
-        ? (streak.currentStreak === 1 ? "mo" : "mos")
-        : freq === "yearly"
-        ? (streak.currentStreak === 1 ? "yr" : "yrs")
-        : (streak.currentStreak === 1 ? "day" : "days");
-      const habitMaxFreezes = this.plugin.streakService.getEffectiveMaxFreezes(streak, maxFreezes);
-
-      const freqText = freq.charAt(0).toUpperCase() + freq.slice(1) + (freq !== "daily" && streak.scheduleType === "fixed" ? " (Fixed)" : "");
-      const freqBadge = leftCol.createSpan({ text: freqText });
-      freqBadge.style.cssText = "font-size: 10px; padding: 1px 6px; border-radius: 4px; background: var(--background-modifier-border); color: var(--text-muted); font-weight: 500; text-transform: uppercase;";
-
-      const countBadge = leftCol.createSpan({ text: `${streak.currentStreak || 0} ${streakUnit}` });
-      countBadge.style.cssText = "font-size: 11px; padding: 2px 8px; border-radius: 10px; background: rgba(255, 152, 0, 0.15); color: #ffa726; font-weight: 600;";
-
-      const isFrozen = this.plugin.streakService.isFrozen(streak);
-      if (isFrozen) {
-        const daysLeft = this.plugin.streakService.getFreezeDaysLeft(streak);
-        const freezeBadge = leftCol.createSpan({ text: `❄️ Frozen (${daysLeft}d left)` });
-        freezeBadge.style.cssText = "font-size: 11px; padding: 2px 8px; border-radius: 10px; background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-weight: 600;";
-      }
-
-      const actions = streakCard.createDiv({ cls: "os-settings-streak-actions" });
-      actions.style.cssText = "display: flex; align-items: center; gap: 6px;";
-
-      // Freeze button
-      const freezeBtn = actions.createEl("button", { text: isFrozen ? "Unfreeze" : "Freeze", cls: "mod-warning" });
-      freezeBtn.addEventListener("click", () => {
-        new FreezeStreakModal(this.app, streak, this.plugin.streakService, habitMaxFreezes, async () => {
-          await this.plugin.streakService.saveHabits(habitsFilePath, streaks, maxFreezes);
-          await this.plugin.saveSettings();
-          await this.renderStreaksList(container);
-        }).open();
-      });
-
-      // Edit button (name & description)
-      const editBtn = actions.createEl("button", { text: "Edit" });
-      editBtn.addEventListener("click", () => {
-        new StreakModal(this.app, streak, async (updated) => {
-          await this.plugin.streakService.updateHabitDetails(
-            habitsFilePath,
-            streak.id,
-            updated.name,
-            updated.description,
-            this.plugin.settings
-          );
-          await this.plugin.saveSettings();
-          await this.renderStreaksList(container);
-        }).open();
-      });
-
-      // Archive / Delete button
-      const deleteBtn = actions.createEl("button", { text: "Manage", cls: "mod-destructive" });
-      deleteBtn.addEventListener("click", () => {
-        new ArchiveOrDeleteStreakModal(
-          this.app,
-          streak,
-          archiveFilePath,
-          async () => {
-            await this.plugin.streakService.archiveHabit(habitsFilePath, archiveFilePath, streak.id, this.plugin.settings);
-            await this.plugin.saveSettings();
-            await this.renderStreaksList(container);
-          },
-          async () => {
-            await this.plugin.streakService.deleteHabit(habitsFilePath, streak.id, this.plugin.settings);
-            await this.plugin.saveSettings();
-            await this.renderStreaksList(container);
-          }
-        ).open();
-      });
-    });
-
-    new Setting(container)
-      .addButton(btn => {
-        btn.setButtonText("+ Add New Habit")
-          .setCta()
-          .onClick(() => {
-            new StreakModal(this.app, null, async (newStreak) => {
-              streaks.push(newStreak);
-              await this.plugin.streakService.saveHabits(habitsFilePath, streaks, maxFreezes);
-              this.plugin.settings.streaks = streaks;
-              await this.plugin.saveSettings();
-              await this.renderStreaksList(container);
-            }).open();
           });
       });
   }

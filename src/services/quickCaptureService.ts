@@ -1,5 +1,5 @@
 import { App, TFolder, Notice } from "obsidian";
-import { OSDashboardSettings, moment } from "../types";
+import { OSDashboardSettings, moment, getEffectiveNewFilePattern } from "../types";
 
 export class QuickCaptureService {
   private app: App;
@@ -18,7 +18,7 @@ export class QuickCaptureService {
     const folderPath = settings.quickCaptureFolder || "00 Inbox";
     await this.ensureFolderExists(folderPath);
 
-    const pattern = settings.newFilePattern || "YYYY-MM-DD HH-mm";
+    const pattern = getEffectiveNewFilePattern(this.app, settings.newFilePattern);
     let fileName = moment().format(pattern) || "Quick Note";
 
     // Clean filename of invalid characters

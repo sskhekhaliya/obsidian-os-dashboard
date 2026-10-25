@@ -36,7 +36,7 @@ export class RecentNotesService {
         file,
         title: file.basename,
         formattedTime: this.formatRelativeTime(file.stat.mtime),
-        resolvedIcon: this.iconService.resolveFileFolderIcon(file)
+        resolvedIcon: this.iconService.resolveFileFolderIcon(file, settings)
       };
     });
   }

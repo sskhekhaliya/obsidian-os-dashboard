@@ -16,6 +16,7 @@ export class StreakModal extends Modal {
   private freezePeriodType: HabitFreezePeriod = "monthly";
   private freezeQuota: number = 4;
   private autoPopulate: boolean = true;
+  private autoFreeze: boolean = true;
 
   constructor(
     app: App,
@@ -39,6 +40,7 @@ export class StreakModal extends Modal {
       this.freezePeriodType = streak.freezePeriodType || "monthly";
       this.freezeQuota = streak.freezeQuota ?? streak.maxFreezesPerMonth ?? 4;
       this.autoPopulate = streak.autoPopulate !== false;
+      this.autoFreeze = streak.autoFreeze !== false;
     }
   }
 
@@ -243,6 +245,17 @@ export class StreakModal extends Modal {
               this.autoPopulate = val;
             });
         });
+
+      // Auto-freeze toggle
+      new Setting(contentEl)
+        .setName("Auto-Freeze if Missed")
+        .setDesc("Automatically use a freeze from this habit's allowance if missed.")
+        .addToggle(toggle => {
+          toggle.setValue(this.autoFreeze)
+            .onChange(val => {
+              this.autoFreeze = val;
+            });
+        });
     }
 
     // Save and Cancel buttons
@@ -279,7 +292,8 @@ export class StreakModal extends Modal {
               freezePeriodType: this.streak ? (this.streak.freezePeriodType || "monthly") : this.freezePeriodType,
               freezeQuota: this.streak ? (this.streak.freezeQuota ?? 4) : this.freezeQuota,
               maxFreezesPerMonth: this.streak ? (this.streak.freezeQuota ?? 4) : this.freezeQuota,
-              autoPopulate: this.streak ? this.streak.autoPopulate : this.autoPopulate
+              autoPopulate: this.streak ? this.streak.autoPopulate : this.autoPopulate,
+              autoFreeze: this.streak ? (this.streak.autoFreeze ?? this.autoFreeze) : this.autoFreeze
             };
 
             await this.onSave(item);

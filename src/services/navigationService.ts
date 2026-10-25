@@ -1,5 +1,5 @@
 import { App, TFolder, TFile, Notice } from "obsidian";
-import { FolderCard, OSDashboardSettings, moment } from "../types";
+import { FolderCard, OSDashboardSettings, moment, getEffectiveNewFilePattern } from "../types";
 import { IconService } from "./iconService";
 
 export class NavigationService {
@@ -63,7 +63,7 @@ export class NavigationService {
         });
       }
 
-      const iconInfo = this.iconService.resolveFolderIcon(folder.path, folder.name, idx);
+      const iconInfo = this.iconService.resolveFolderIcon(folder.path, folder.name, idx, settings);
 
       cards.push({
         name: folder.name,
@@ -92,7 +92,7 @@ export class NavigationService {
 
     // No Home note found: create a new note in this folder
     try {
-      const pattern = settings.newFilePattern || "YYYY-MM-DD HH-mm";
+      const pattern = getEffectiveNewFilePattern(this.app, settings.newFilePattern);
       let baseTitle = moment().format(pattern);
       if (!baseTitle || baseTitle.trim().length === 0) {
         baseTitle = "Untitled";

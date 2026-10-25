@@ -64,9 +64,31 @@
   height: 100% !important;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 0 0 16px 0 !important;
+  padding: 0 0 22px 0 !important;
   margin: 0 !important;
   box-sizing: border-box;
+}
+
+/* Mobile Safe Area & Top/Bottom UI Clearance (prevents overlapping notification bar and Obsidian UI in both portrait and horizontal modes) */
+body.is-phone .os-dashboard-container,
+body.is-mobile:not(.is-tablet) .os-dashboard-container {
+  padding-top: calc(max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px)) + var(--os-dashboard-mobile-top-margin, 48px)) !important;
+  padding-bottom: calc(max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px)) + 64px) !important;
+}
+
+body.is-tablet .os-dashboard-container {
+  padding-top: max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px), 6px) !important;
+  padding-bottom: calc(max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px)) + 38px) !important;
+}
+
+/* Mobile landscape safe areas for left/right notch */
+body.is-mobile .os-dashboard-container {
+  padding-left: max(env(safe-area-inset-left, 0px), var(--safe-area-inset-left, 0px)) !important;
+  padding-right: max(env(safe-area-inset-right, 0px), var(--safe-area-inset-right, 0px)) !important;
+}
+
+.os-dashboard-codeblock-wrapper:not(:first-child) .os-dashboard-container {
+  padding-top: 0 !important;
 }
 
 /* Body Container (Clean side padding for cards) */
@@ -286,6 +308,12 @@
   .os-dashboard-quote-top {
     display: none;
   }
+}
+
+.is-phone .os-dashboard-hero,
+.is-mobile .os-dashboard-hero {
+  border-radius: 12px !important;
+  margin-top: 4px !important;
 }
 
 .is-phone .os-dashboard-hero-content,
@@ -1516,21 +1544,21 @@ body.is-phone .os-task-actions {
    -------------------------------------------------------------------------- */
 .os-card-links .os-card-header {
   border-bottom: 1px solid var(--os-card-border);
-  padding-bottom: 7px;
-  margin-bottom: 8px;
+  padding-bottom: 6px;
+  margin-bottom: 6px;
 }
 
 .os-links-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px 8px;
+  gap: 2px 6px;
 }
 
 .os-link-item {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 5px 6px;
+  gap: 6px;
+  padding: 3px 6px;
   background: transparent !important;
   border: none !important;
   border-radius: 4px;
@@ -1538,6 +1566,7 @@ body.is-phone .os-task-actions {
   transition: all 0.15s ease;
   overflow: hidden;
   box-shadow: none !important;
+  min-height: 24px;
 }
 
 .os-link-item:hover {
@@ -1545,9 +1574,15 @@ body.is-phone .os-task-actions {
   transform: translateX(2px);
 }
 
+.os-link-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .os-link-icon svg {
-  width: 14px;
-  height: 14px;
+  width: 13px;
+  height: 13px;
   color: #34d399;
   flex-shrink: 0;
 }
@@ -1560,10 +1595,112 @@ body.is-phone .os-task-actions {
   overflow: hidden;
   text-overflow: ellipsis;
   transition: color 0.15s ease;
+  line-height: 1.2;
 }
 
 .os-link-item:hover .os-link-title {
   color: var(--interactive-accent);
+}
+
+/* Bookmarks Settings List & Drag-and-Drop */
+.os-settings-bookmarks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 12px;
+}
+
+.os-settings-bookmark-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: var(--background-primary-alt);
+  border: 1px solid var(--background-modifier-border);
+  transition: all 0.12s ease;
+  position: relative;
+  user-select: none;
+}
+
+.os-settings-bookmark-row:hover {
+  border-color: rgba(var(--interactive-accent-rgb, 139, 92, 246), 0.35);
+}
+
+.os-settings-bookmark-row.is-dragging {
+  opacity: 0.35;
+  border-style: dashed;
+}
+
+.os-settings-bookmark-row.os-drop-indicator-top {
+  border-top: 2px solid var(--interactive-accent, #8b5cf6) !important;
+}
+
+.os-settings-bookmark-row.os-drop-indicator-bottom {
+  border-bottom: 2px solid var(--interactive-accent, #8b5cf6) !important;
+}
+
+.os-settings-drag-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  color: var(--text-faint);
+  padding: 2px;
+  flex-shrink: 0;
+  border-radius: 4px;
+  transition: color 0.12s ease;
+}
+
+.os-settings-drag-handle:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.os-settings-link-icon-preview {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 5px;
+  background: rgba(var(--interactive-accent-rgb, 139, 92, 246), 0.1);
+  color: var(--interactive-accent, #8b5cf6);
+  flex-shrink: 0;
+}
+
+.os-settings-link-icon-preview svg {
+  width: 14px;
+  height: 14px;
+}
+
+.os-settings-bookmark-input {
+  height: 30px !important;
+  font-size: 12.5px !important;
+  border-radius: 4px !important;
+}
+
+.os-bookmark-title-input {
+  flex: 1 1 130px !important;
+  min-width: 90px !important;
+}
+
+.os-bookmark-url-input {
+  flex: 2 1 200px !important;
+  min-width: 130px !important;
+}
+
+.os-bookmark-icon-input {
+  flex: 0 1 120px !important;
+  min-width: 80px !important;
+}
+
+.os-bookmark-del-btn {
+  flex-shrink: 0;
+}
+
+.os-settings-add-bookmark-wrap {
+  margin-top: 6px;
 }
 
 /* --------------------------------------------------------------------------
@@ -1693,6 +1830,280 @@ body.is-phone .os-task-actions {
   padding: 6px 0;
 }
 
+.os-custom-dataview-body {
+  max-height: 380px;
+  overflow-y: auto;
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 6px 2px;
+}
+
+/* Dataview Scrollbars */
+.os-custom-dataview-body::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+.os-custom-dataview-body::-webkit-scrollbar-thumb {
+  background: var(--background-modifier-border);
+  border-radius: 4px;
+}
+
+/* Card Title & Description Column */
+.os-card-title-col {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.os-card-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 400;
+  line-height: 1.3;
+}
+
+/* Dataview Table Wrapper */
+.os-custom-dataview-body .dataview-container {
+  overflow-x: auto;
+  width: 100%;
+}
+
+.os-custom-dataview-body table.table-view-table,
+.os-custom-dataview-body table.dataview,
+.os-custom-dataview-body table {
+  width: 100% !important;
+  border-collapse: separate !important;
+  border-spacing: 0 !important;
+  font-size: 12.5px !important;
+  border-radius: 0 !important;
+  border: none !important;
+  background: transparent !important;
+  margin: 2px 0 6px 0 !important;
+  overflow: visible !important;
+  box-shadow: none !important;
+}
+
+/* Table Header */
+.os-custom-dataview-body thead.table-view-thead,
+.os-custom-dataview-body thead {
+  background: transparent !important;
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 2 !important;
+}
+
+/* On-Off Table Header */
+.os-custom-dataview-body.is-hide-header thead.table-view-thead,
+.os-custom-dataview-body.is-hide-header thead {
+  display: none !important;
+}
+
+.os-custom-dataview-body th.table-view-th,
+.os-custom-dataview-body th {
+  padding: 6px 10px 8px 10px !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.05em !important;
+  color: var(--text-muted) !important;
+  border-bottom: 1px solid var(--background-modifier-border) !important;
+  border-top: none !important;
+  border-left: none !important;
+  border-right: none !important;
+  text-align: left !important;
+  white-space: nowrap !important;
+  user-select: none !important;
+  background: transparent !important;
+}
+
+.os-custom-dataview-body th:not(:last-child) {
+  border-right: none !important;
+}
+
+.os-custom-dataview-body th:hover {
+  color: var(--text-normal) !important;
+}
+
+/* Table Body Rows - Borderless & Clean */
+.os-custom-dataview-body tbody.table-view-tbody tr.table-view-tr,
+.os-custom-dataview-body tbody tr {
+  transition: background 0.12s ease !important;
+  border-bottom: none !important;
+  border-top: none !important;
+  border-left: none !important;
+  border-right: none !important;
+  background: transparent !important;
+}
+
+.os-custom-dataview-body tbody tr:nth-child(even) {
+  background: transparent !important;
+}
+
+.os-custom-dataview-body tbody tr:hover {
+  background: rgba(var(--interactive-accent-rgb, 139, 92, 246), 0.05) !important;
+}
+
+.os-custom-dataview-body td.table-view-td,
+.os-custom-dataview-body td {
+  padding: 6px 10px !important;
+  font-size: 12.5px !important;
+  color: var(--text-normal) !important;
+  border: none !important;
+  vertical-align: middle !important;
+}
+
+.os-custom-dataview-body td:not(:last-child) {
+  border-right: none !important;
+}
+
+.os-custom-dataview-body tbody tr:last-child td {
+  border-bottom: none !important;
+}
+
+/* Links inside Dataview Table */
+.os-custom-dataview-body a.internal-link {
+  color: var(--text-accent, #8b5cf6) !important;
+  text-decoration: none !important;
+  font-weight: 500 !important;
+  padding: 1px 3px !important;
+  border-radius: 4px !important;
+  transition: all 0.12s ease !important;
+  display: inline-flex !important;
+  align-items: center !important;
+}
+
+.os-custom-dataview-body a.internal-link:hover {
+  background: rgba(var(--interactive-accent-rgb, 139, 92, 246), 0.12) !important;
+  color: var(--text-accent-hover, #a78bfa) !important;
+  text-decoration: none !important;
+}
+
+/* Tags inside Dataview Table */
+.os-custom-dataview-body a.tag {
+  display: inline-flex !important;
+  align-items: center !important;
+  font-size: 10.5px !important;
+  padding: 2px 8px !important;
+  border-radius: 12px !important;
+  background: rgba(56, 189, 248, 0.12) !important;
+  color: #38bdf8 !important;
+  font-weight: 500 !important;
+  border: 1px solid rgba(56, 189, 248, 0.25) !important;
+  text-decoration: none !important;
+  margin: 1px 2px !important;
+  transition: all 0.15s ease !important;
+}
+
+.os-custom-dataview-body a.tag:hover {
+  background: rgba(56, 189, 248, 0.22) !important;
+  border-color: rgba(56, 189, 248, 0.45) !important;
+}
+
+/* Inline Code & Monospace in Dataview */
+.os-custom-dataview-body code {
+  font-size: 11.5px !important;
+  font-family: var(--font-monospace) !important;
+  background: var(--background-secondary) !important;
+  color: var(--text-accent, #8b5cf6) !important;
+  padding: 1px 5px !important;
+  border-radius: 4px !important;
+  border: 1px solid var(--background-modifier-border) !important;
+}
+
+/* Checkbox inside Dataview */
+.os-custom-dataview-body input[type="checkbox"] {
+  accent-color: var(--interactive-accent, #8b5cf6) !important;
+  cursor: pointer !important;
+  width: 14px !important;
+  height: 14px !important;
+  margin-right: 6px !important;
+  border-radius: 4px !important;
+}
+
+/* Dataview Lists */
+.os-custom-dataview-body ul.list-view-ul,
+.os-custom-dataview-body ul.dataview-ul {
+  list-style: none !important;
+  padding-left: 0 !important;
+  margin: 4px 0 !important;
+}
+
+.os-custom-dataview-body ul.list-view-ul li,
+.os-custom-dataview-body ul.dataview-ul li {
+  padding: 7px 12px !important;
+  margin-bottom: 5px !important;
+  border-radius: 6px !important;
+  background: var(--background-primary-alt) !important;
+  border: 1px solid var(--background-modifier-border) !important;
+  font-size: 12.5px !important;
+  transition: all 0.15s ease !important;
+}
+
+.os-custom-dataview-body ul.list-view-ul li:hover,
+.os-custom-dataview-body ul.dataview-ul li:hover {
+  background: rgba(var(--interactive-accent-rgb, 139, 92, 246), 0.08) !important;
+  border-color: rgba(var(--interactive-accent-rgb, 139, 92, 246), 0.3) !important;
+}
+
+/* Dataview Tasks */
+.os-custom-dataview-body ul.task-list {
+  list-style: none !important;
+  padding-left: 0 !important;
+}
+
+.os-custom-dataview-body ul.task-list li {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  padding: 6px 10px !important;
+  border-radius: 6px !important;
+  font-size: 12.5px !important;
+  transition: background 0.15s ease !important;
+}
+
+.os-custom-dataview-body ul.task-list li:hover {
+  background: rgba(var(--interactive-accent-rgb, 139, 92, 246), 0.06) !important;
+}
+
+/* Rotating animation for header refresh button */
+@keyframes os-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.os-card-header-btn.is-rotating svg {
+  animation: os-spin 0.6s linear infinite;
+}
+
+.os-dataview-missing-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: var(--text-normal);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.os-dataview-missing-icon {
+  color: #f59e0b;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.os-custom-buttons-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 0;
+}
+
 .os-custom-action-btn {
   display: inline-flex;
   align-items: center;
@@ -1700,18 +2111,48 @@ body.is-phone .os-task-actions {
   gap: 6px;
   padding: 6px 14px;
   border-radius: 6px;
-  background: rgba(var(--card-accent-rgb, 99, 102, 241), 0.15);
-  border: 1px solid rgba(var(--card-accent-rgb, 99, 102, 241), 0.35);
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
   color: var(--text-normal);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 12.5px;
+  font-weight: 500;
   cursor: pointer;
   transition: all 0.15s ease;
+  user-select: none;
 }
 
 .os-custom-action-btn:hover {
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
+  background: rgba(var(--interactive-accent-rgb, 139, 92, 246), 0.14);
+  border-color: rgba(var(--interactive-accent-rgb, 139, 92, 246), 0.4);
+  color: var(--text-accent, #8b5cf6);
+  transform: translateY(-1px);
+}
+
+.os-custom-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.os-custom-btn-icon svg {
+  width: 13px;
+  height: 13px;
+  display: block;
+}
+
+.os-settings-btn-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--background-primary-alt);
+  border: 1px solid var(--background-modifier-border);
+}
+
+.os-settings-btn-item input[type="text"] {
+  height: 30px;
 }
 
 /* ==========================================================================
@@ -2347,37 +2788,103 @@ body.is-phone .os-task-actions {
 /* Google Calendar Address Setup Banner */
 .os-calendar-address-banner {
   margin-top: 8px;
-  padding: 6px 9px;
-  border-radius: 6px;
+  padding: 6px 10px;
+  border-radius: 8px;
   background: rgba(var(--interactive-accent-rgb, 139, 92, 246), 0.08);
   border: 1px dashed rgba(var(--interactive-accent-rgb, 139, 92, 246), 0.35);
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
+  transition: all 0.2s ease;
+}
+
+.os-calendar-banner-left {
+  display: flex;
+  align-items: center;
   gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.os-calendar-banner-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--interactive-accent, #8b5cf6);
+  flex-shrink: 0;
+}
+
+.os-calendar-banner-icon svg {
+  width: 14px;
+  height: 14px;
 }
 
 .os-calendar-banner-text {
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--text-muted);
   line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.os-calendar-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .os-calendar-address-btn {
-  font-size: 10px;
+  font-size: 10.5px;
   font-weight: 600;
-  padding: 3px 8px;
-  border-radius: 4px;
+  padding: 3px 9px;
+  border-radius: 5px;
   background: var(--interactive-accent, #8b5cf6);
   color: #ffffff;
   border: none;
   cursor: pointer;
   flex-shrink: 0;
-  transition: opacity 0.15s ease;
+  transition: opacity 0.15s ease, transform 0.1s ease;
 }
 
 .os-calendar-address-btn:hover {
   opacity: 0.9;
+  transform: translateY(-1px);
+}
+
+.os-calendar-banner-dismiss {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--text-muted);
+  opacity: 0.6;
+  transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.os-calendar-banner-dismiss:hover {
+  opacity: 1;
+  color: var(--text-normal);
+  background: rgba(var(--interactive-accent-rgb, 139, 92, 246), 0.15);
+}
+
+.os-calendar-banner-dismiss svg {
+  width: 13px;
+  height: 13px;
+}
+
+@keyframes os-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.os-spin {
+  animation: os-spin 1s linear infinite;
 }
 
 /* Graph View Widget - Real Embedded Graph View */
@@ -3319,6 +3826,277 @@ body.is-phone .os-task-actions {
   .os-hdetail-fixed-footer button {
     font-size: 11px;
     padding: 5px 10px;
+  }
+}
+
+/* ==========================================================================
+   Folder Style Customization & Settings Overrides List
+   ========================================================================== */
+
+/* Folder Preview Banner in Modal */
+.os-folder-preview-wrap {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 20px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--background-secondary) 70%, transparent);
+  border: 1px solid var(--background-modifier-border);
+  margin: 16px 0;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  position: relative;
+  overflow: hidden;
+}
+
+.os-folder-preview-wrap::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--preview-accent, #3b82f6);
+  border-radius: 4px 0 0 4px;
+}
+
+.os-folder-preview-icon {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--preview-accent, #3b82f6) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--preview-accent, #3b82f6) 30%, transparent);
+}
+
+.os-folder-preview-icon svg {
+  width: 22px;
+  height: 22px;
+  stroke: var(--preview-accent, #3b82f6);
+  fill: none;
+}
+
+.os-folder-preview-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+/* Color Controls */
+.os-color-picker-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.os-native-color-picker {
+  -webkit-appearance: none;
+  appearance: none;
+  border: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  cursor: pointer;
+  background: transparent;
+  padding: 0;
+}
+
+.os-native-color-picker::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.os-native-color-picker::-webkit-color-swatch {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+}
+
+.os-hex-color-input {
+  width: 90px !important;
+  font-family: var(--font-monospace);
+  font-size: 12px;
+  text-align: center;
+}
+
+/* Color Swatches Grid */
+.os-color-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 16px 0;
+}
+
+.os-color-swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.os-color-swatch:hover {
+  transform: scale(1.15);
+}
+
+.os-color-swatch.is-selected {
+  border-color: var(--text-normal);
+  transform: scale(1.12);
+  box-shadow: 0 0 0 2px var(--background-primary);
+}
+
+/* Settings Tab Folder Overrides List */
+.os-folder-overrides-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.os-folder-override-item {
+  display: grid;
+  grid-template-columns: 240px 140px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: color-mix(in srgb, var(--background-secondary) 50%, transparent);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  transition: background 0.15s ease;
+}
+
+.os-folder-override-item:hover {
+  background: color-mix(in srgb, var(--background-secondary) 75%, transparent);
+}
+
+.os-folder-override-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.os-folder-override-icon-wrap {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--background-primary) 70%, transparent);
+  flex-shrink: 0;
+}
+
+.os-folder-override-icon-wrap svg {
+  width: 16px;
+  height: 16px;
+}
+
+.os-folder-override-label-wrap {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.os-folder-override-title {
+  font-weight: 500;
+  font-size: 13px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  color: var(--text-normal);
+}
+
+.os-folder-override-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+.os-folder-override-icon-input {
+  width: 100% !important;
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
+.os-folder-override-color-col {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.os-folder-override-color-native {
+  -webkit-appearance: none;
+  appearance: none;
+  border: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  cursor: pointer;
+  background: transparent;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.os-folder-override-color-native::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.os-folder-override-color-native::-webkit-color-swatch {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+}
+
+.os-folder-override-hex-input {
+  width: 76px !important;
+  font-family: var(--font-monospace);
+  font-size: 11px;
+  text-align: center;
+  padding: 3px 6px;
+}
+
+.os-mini-swatches {
+  display: flex;
+  gap: 4px;
+}
+
+.os-mini-swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: transform 0.1s ease;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+}
+
+.os-mini-swatch:hover {
+  transform: scale(1.2);
+}
+
+.os-folder-override-reset-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 4px 6px;
+  color: var(--text-muted);
+  border-radius: 6px;
+  transition: color 0.15s ease, background 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.os-folder-override-reset-btn:hover {
+  color: var(--text-error, #f43f5e);
+  background: color-mix(in srgb, var(--background-modifier-error, #f43f5e) 15%, transparent);
+}
+
+@media (max-width: 768px) {
+  .os-folder-override-item {
+    grid-template-columns: 1fr;
+    gap: 8px;
   }
 }
 

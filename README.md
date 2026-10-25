@@ -2,7 +2,15 @@
 
 A sleek personal operating system dashboard for your Obsidian vault, inspired by executive knowledge dashboards.
 
-![Dashboard Preview](Sleek%20Obsidian%20Knowledge%20Dashboard.png)
+### 🖥️ Desktop View
+
+![OS Dashboard Desktop Preview](Screenshots/PC%20Dashboard.png)
+
+### 📱 Mobile View
+
+<p align="center">
+  <img src="Screenshots/Mobile%20Dashboard.png" alt="OS Dashboard Mobile Preview" width="380" />
+</p>
 
 ## Features
 

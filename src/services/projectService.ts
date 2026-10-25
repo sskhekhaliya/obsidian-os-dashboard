@@ -95,7 +95,7 @@ export class ProjectService {
 
       progress = Math.max(0, Math.min(100, progress));
 
-      const folderIcon = this.iconService.resolveFileFolderIcon(file);
+      const folderIcon = this.iconService.resolveFileFolderIcon(file, settings);
 
       results.push({
         title: file.basename,

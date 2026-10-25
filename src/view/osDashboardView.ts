@@ -23,7 +23,7 @@ export class OSDashboardView extends ItemView {
   }
 
   public getDisplayText(): string {
-    return this.plugin.settings.vaultTitle || "OS Dashboard";
+    return this.plugin.settings.vaultTitle?.trim() || this.app.vault.getName() || "OS Dashboard";
   }
 
   public getIcon(): string {

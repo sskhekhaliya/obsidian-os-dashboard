@@ -1,4 +1,4 @@
-import { TFile } from "obsidian";
+import { TFile, App } from "obsidian";
 
 export const moment: any = (...args: any[]): any => {
   return (window as any).moment(...args);
@@ -12,14 +12,38 @@ export interface DashboardLink {
   icon: string;
 }
 
+export interface CustomWidgetButton {
+  id: string;
+  label: string;
+  target: string;
+  icon?: string;
+  color?: string;
+}
+
 export interface CustomWidget {
   id: string;
   title: string;
+  description?: string;
   icon: string;
-  type: "markdown-note" | "custom-text" | "link-button";
+  color?: string;
+  type: "markdown-note" | "custom-text" | "link-button" | "dataview";
   content: string;
-  column: 1 | 2 | 3;
+  buttons?: CustomWidgetButton[];
+  showTableHeader?: boolean;
+  column: 1 | 2 | 3 | "rail";
   enabled: boolean;
+}
+
+export interface WidgetCustomization {
+  title?: string;
+  description?: string;
+  icon?: string;
+  color?: string;
+}
+
+export interface FolderStyleOverride {
+  icon?: string;
+  color?: string;
 }
 
 export interface OSDashboardSettings {
@@ -45,9 +69,11 @@ export interface OSDashboardSettings {
   recentNotesLimit: number;
   recentNotesExcludeFolders: string[];
   ignoredFolders: string[];
+  folderOverrides?: Record<string, FolderStyleOverride>;
   links: DashboardLink[];
   openOnStartup: boolean;
   openOnNewTab: boolean;
+  mobileTopMargin?: number;
 
   // Widget Visibility Toggles
   showHeroBanner: boolean;
@@ -71,10 +97,14 @@ export interface OSDashboardSettings {
   habitsFile: string;
   archiveHabitsFile: string;
   maxFreezesPerMonth: number;
+  autoFreezeHabits: boolean;
 
   // Google Calendar Integration & Local Events
   googleCalendarUrl: string;
+  googleCalendarUseKeychain?: boolean;
+  googleCalendarSecretId?: string;
   googleCalendarAutoSync: boolean;
+  showGoogleCalendarBanner?: boolean;
   enableCalendarNotifications: boolean;
   calendarNotificationLeadMinutes: number;
   cachedCalendarEvents: CalendarEventItem[];
@@ -84,6 +114,9 @@ export interface OSDashboardSettings {
 
   // Custom Widgets
   customWidgets: CustomWidget[];
+
+  // Built-in Widget Customizations
+  widgetCustomizations?: Record<string, WidgetCustomization>;
 
   // Drag and Drop Widget Layout
   widgetLayout?: DashboardWidgetLayout;
@@ -149,35 +182,38 @@ export interface StreakItem {
   freezeQuota?: number;
   maxFreezesPerMonth?: number;
   autoPopulate: boolean;
+  autoFreeze?: boolean;
   journal?: string;
 }
 
 export const DEFAULT_SETTINGS: OSDashboardSettings = {
   bannerPath: "",
   vaultAvatarIcon: "home",
-  vaultTitle: "SSK_OS",
+  vaultTitle: "",
   vaultSubtitle: "Think • Learn • Build • Create • Grow",
   quoteTop: "A better me\na brighter tomorrow.",
   quoteMain: "“Discipline today creates the freedom tomorrow.”",
   clockSubtitle: "Small steps every day\nlead to big results.",
   homeKeywords: ["Home", "Index", "MOC"],
   matchFolderName: true,
-  newFilePattern: "YYYY-MM-DD HH-mm",
+  newFilePattern: "",
   dailyTasksFile: "Daily Tasks.md",
-  dailyLogFile: "Daily Log.md",
+  dailyLogFile: "Daily Logs.md",
   autoLogToDailyLog: true,
   weeklyTasksFile: "Weekly Tasks.md",
   habitsFile: "Habits.md",
-  archiveHabitsFile: "99 Archive/Habit.md",
+  archiveHabitsFile: "99 Archive/Habits.md",
   maxFreezesPerMonth: 4,
+  autoFreezeHabits: true,
   quickCaptureFolder: "00 Inbox",
   projectsFolder: "03 Projects",
   projectStatusProp: "status",
   projectStatusValues: ["in-progress", "active", "ongoing"],
   projectProgressProp: "progress",
   recentNotesLimit: 8,
-  recentNotesExcludeFolders: ["Templates", ".trash"],
+  recentNotesExcludeFolders: ["_attachments", "_scripts", "_templates", "Templates", ".trash"],
   ignoredFolders: ["_attachments", "_scripts", "_templates", "Templates", ".trash"],
+  folderOverrides: {},
   links: [
     { id: "1", title: "Lichess", url: "https://lichess.org", icon: "gamepad-2" },
     { id: "2", title: "Chess.com", url: "https://chess.com", icon: "crosshair" },
@@ -190,6 +226,7 @@ export const DEFAULT_SETTINGS: OSDashboardSettings = {
   ],
   openOnStartup: true,
   openOnNewTab: false,
+  mobileTopMargin: 48,
   showHeroBanner: true,
   showNavRibbon: true,
   showTodayTasks: true,
@@ -211,7 +248,10 @@ export const DEFAULT_SETTINGS: OSDashboardSettings = {
 
   // Google Calendar Integration Defaults
   googleCalendarUrl: "",
+  googleCalendarUseKeychain: false,
+  googleCalendarSecretId: "",
   googleCalendarAutoSync: true,
+  showGoogleCalendarBanner: true,
   enableCalendarNotifications: true,
   calendarNotificationLeadMinutes: 10,
   cachedCalendarEvents: [],
@@ -220,6 +260,7 @@ export const DEFAULT_SETTINGS: OSDashboardSettings = {
   lastCalendarSyncTime: 0,
 
   customWidgets: [],
+  widgetCustomizations: {},
   widgetLayout: {
     col1: ["todayTasks", "weeklyTasks"],
     col2: ["recentNotes", "quickCapture"],
@@ -290,4 +331,25 @@ export interface RecentNoteItem {
   title: string;
   formattedTime: string;
   resolvedIcon: ResolvedFolderIcon;
+}
+
+export function getDailyNotesFormat(app: App): string {
+  try {
+    const internalPlugins = (app as any).internalPlugins;
+    const dailyNotes =
+      internalPlugins?.getPluginById?.("daily-notes")?.instance ||
+      internalPlugins?.plugins?.["daily-notes"]?.instance;
+    const format = dailyNotes?.options?.format;
+    if (format && typeof format === "string" && format.trim()) {
+      return format.trim();
+    }
+  } catch (e) {}
+  return "YYYY-MM-DD";
+}
+
+export function getEffectiveNewFilePattern(app: App, pattern?: string): string {
+  if (pattern && pattern.trim()) {
+    return pattern.trim();
+  }
+  return getDailyNotesFormat(app);
 }

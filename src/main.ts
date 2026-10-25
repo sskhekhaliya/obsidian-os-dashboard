@@ -1,4 +1,4 @@
-import { Plugin, WorkspaceLeaf } from "obsidian";
+import { Plugin, WorkspaceLeaf, Notice } from "obsidian";
 import { OSDashboardSettings, DEFAULT_SETTINGS } from "./types";
 import { OSDashboardSettingTab } from "./settings";
 import { OSDashboardView, VIEW_TYPE_OS_DASHBOARD } from "./view/osDashboardView";
@@ -41,8 +41,9 @@ export default class OSDashboardPlugin extends Plugin {
     this.calendarService = new CalendarService(this.app);
 
     // Initial background calendar sync & notification check if URL is configured
-    if (this.settings.googleCalendarUrl) {
-      this.calendarService.fetchEvents(this.settings.googleCalendarUrl).then(events => {
+    const initialCalUrl = this.calendarService.getCalendarUrl(this.settings);
+    if (initialCalUrl) {
+      this.calendarService.fetchEvents(initialCalUrl).then(events => {
         this.settings.cachedCalendarEvents = events;
         this.settings.lastCalendarSyncTime = Date.now();
         if (this.settings.enableCalendarNotifications) {
@@ -56,9 +57,10 @@ export default class OSDashboardPlugin extends Plugin {
     // Periodic calendar sync & notification interval (checks every 60 seconds)
     this.registerInterval(
       window.setInterval(async () => {
-        if (this.settings.googleCalendarUrl && this.settings.googleCalendarAutoSync) {
+        const calUrl = this.calendarService.getCalendarUrl(this.settings);
+        if (calUrl && this.settings.googleCalendarAutoSync) {
           try {
-            const events = await this.calendarService.fetchEvents(this.settings.googleCalendarUrl);
+            const events = await this.calendarService.fetchEvents(calUrl);
             this.settings.cachedCalendarEvents = events;
             this.settings.lastCalendarSyncTime = Date.now();
           } catch (e) {}
@@ -72,6 +74,13 @@ export default class OSDashboardPlugin extends Plugin {
             ...mdEvents
           ];
           this.calendarService.checkUpcomingEventNotifications(allEvents, this.settings.calendarNotificationLeadMinutes || 10);
+        }
+
+        // Periodic auto-freeze check for missed habits
+        if (this.settings.autoFreezeHabits) {
+          try {
+            await this.runAutoFreeze();
+          } catch (e) {}
         }
       }, 60 * 1000)
     );
@@ -121,6 +130,12 @@ export default class OSDashboardPlugin extends Plugin {
 
     // Handle open on startup
     this.app.workspace.onLayoutReady(() => {
+      if (this.settings.autoFreezeHabits) {
+        this.runAutoFreeze().catch(err => {
+          console.warn("[OS Dashboard] Failed to run initial auto-freeze:", err);
+        });
+      }
+
       if (this.settings.openOnStartup) {
         window.setTimeout(() => {
           this.activateView();
@@ -180,6 +195,12 @@ export default class OSDashboardPlugin extends Plugin {
     const data = await this.loadData();
     this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
 
+    // Migrate legacy default "SSK_OS" to empty string so vault name is auto-detected
+    if (this.settings.vaultTitle === "SSK_OS") {
+      this.settings.vaultTitle = "";
+      await this.saveData(this.settings);
+    }
+
     // Clean up initial dummy mock streaks if present from previous version
     if (this.settings.streaks && this.settings.streaks.length === 5) {
       const isDummy = this.settings.streaks.every(s => ["1", "2", "3", "4", "5"].includes(s.id) && [12, 8, 5, 10, 7].includes(s.currentStreak));
@@ -200,5 +221,29 @@ export default class OSDashboardPlugin extends Plugin {
         await leaf.view.refresh();
       }
     }
+  }
+
+  public async runAutoFreeze(): Promise<boolean> {
+    if (!this.streakService) return false;
+    const habitsFilePath = this.settings.habitsFile || "Habits.md";
+    const maxFreezes = this.settings.maxFreezesPerMonth || 4;
+    const habits = await this.streakService.loadHabits(habitsFilePath, this.settings.streaks || []);
+    const result = this.streakService.checkAndApplyAutoFreeze(habits, maxFreezes, this.settings.autoFreezeHabits);
+    if (result.applied) {
+      await this.streakService.saveHabits(habitsFilePath, habits, maxFreezes);
+      this.settings.streaks = habits;
+      await this.saveData(this.settings);
+      for (const msg of result.messages) {
+        new Notice(`[OS Dashboard] ${msg}`);
+      }
+      const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_OS_DASHBOARD);
+      for (const leaf of leaves) {
+        if (leaf.view instanceof OSDashboardView) {
+          await leaf.view.refresh();
+        }
+      }
+      return true;
+    }
+    return false;
   }
 }

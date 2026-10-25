@@ -169,6 +169,9 @@ export class StreakService {
           case "auto populate":
             currentHabit.autoPopulate = val.toLowerCase() !== "false";
             break;
+          case "auto freeze":
+            currentHabit.autoFreeze = val.toLowerCase() !== "false";
+            break;
         }
       }
     }
@@ -204,6 +207,7 @@ export class StreakService {
       freezeQuota: partial.freezeQuota ?? partial.maxFreezesPerMonth,
       maxFreezesPerMonth: partial.freezeQuota ?? partial.maxFreezesPerMonth,
       autoPopulate: partial.autoPopulate !== false,
+      autoFreeze: partial.autoFreeze,
       journal: partial.journal || this.encodeHabitJournal(partial.history || [], partial.freezeHistory || [], partial.startDate)
     };
   }
@@ -258,6 +262,9 @@ export class StreakService {
         lines.push(`> - **Journal**: ${journalStr}`);
       }
       lines.push(`> - **Auto Populate**: ${habit.autoPopulate !== false}`);
+      if (habit.autoFreeze !== undefined) {
+        lines.push(`> - **Auto Freeze**: ${habit.autoFreeze}`);
+      }
       lines.push("");
     }
 
@@ -458,6 +465,164 @@ export class StreakService {
   }
 
   /**
+   * Checks if habit was completed in a given cycle key (daily date, weekly GGGG-[W]WW, monthly YYYY-MM, yearly YYYY)
+   */
+  public isCycleCompleted(streak: StreakItem, cycleKey: string): boolean {
+    if (streak.lastCompletedCycle === cycleKey) return true;
+    if (!streak.history || streak.history.length === 0) return false;
+    const freq = streak.frequency || "daily";
+    if (freq === "daily") {
+      return streak.history.includes(cycleKey) || streak.lastCompletedDate === cycleKey;
+    }
+    return streak.history.some(d => {
+      if (freq === "weekly") {
+        return moment(d, "YYYY-MM-DD").format("GGGG-[W]WW") === cycleKey;
+      }
+      if (freq === "monthly") {
+        return moment(d, "YYYY-MM-DD").format("YYYY-MM") === cycleKey;
+      }
+      if (freq === "yearly") {
+        return moment(d, "YYYY-MM-DD").format("YYYY") === cycleKey;
+      }
+      return false;
+    });
+  }
+
+  /**
+   * Checks if habit was frozen in a given cycle key
+   */
+  public isCycleFrozen(streak: StreakItem, cycleKey: string): boolean {
+    if (!streak.freezeHistory || streak.freezeHistory.length === 0) return false;
+    const freq = streak.frequency || "daily";
+    if (freq === "daily") {
+      return streak.freezeHistory.includes(cycleKey);
+    }
+    return streak.freezeHistory.some(d => {
+      if (freq === "weekly") {
+        return moment(d, "YYYY-MM-DD").format("GGGG-[W]WW") === cycleKey;
+      }
+      if (freq === "monthly") {
+        return moment(d, "YYYY-MM-DD").format("YYYY-MM") === cycleKey;
+      }
+      if (freq === "yearly") {
+        return moment(d, "YYYY-MM-DD").format("YYYY") === cycleKey;
+      }
+      return false;
+    });
+  }
+
+  /**
+   * Automatically consumes an available freeze if the user missed completing an active habit.
+   * If globalAutoFreeze is enabled, protects any habit where autoFreeze !== false.
+   * If globalAutoFreeze is disabled, protects habits where autoFreeze === true.
+   */
+  public checkAndApplyAutoFreeze(
+    habits: StreakItem[],
+    defaultQuota = 4,
+    globalAutoFreeze = true
+  ): { applied: boolean; count: number; messages: string[] } {
+    let anyApplied = false;
+    let totalCount = 0;
+    const messages: string[] = [];
+
+    const todayMoment = moment().startOf("day");
+    const yesterdayMoment = moment().subtract(1, "day").startOf("day");
+
+    for (const streak of habits) {
+      if (streak.autoPopulate === false) continue;
+
+      // Check auto-freeze eligibility
+      const habitEligible = globalAutoFreeze ? streak.autoFreeze !== false : streak.autoFreeze === true;
+      if (!habitEligible) continue;
+
+      let available = this.getFreezesRemainingInCurrentPeriod(streak, defaultQuota);
+      if (available <= 0) continue;
+
+      if (!streak.freezeHistory) streak.freezeHistory = [];
+      if (!streak.history) streak.history = [];
+
+      // Check start date: habit must already have started
+      if (streak.startDate) {
+        const startMoment = moment(streak.startDate, "YYYY-MM-DD").startOf("day");
+        if (todayMoment.isBefore(startMoment)) continue;
+      }
+
+      // Must have an active streak or history to protect (don't waste freezes on never-started habits)
+      const hasHistory = streak.history.length > 0;
+      const hadStreak = (streak.currentStreak || 0) > 0;
+      if (!hasHistory && !hadStreak) continue;
+
+      const freq = streak.frequency || "daily";
+
+      if (freq === "daily") {
+        const allRecorded = [...streak.history, ...streak.freezeHistory].sort();
+        if (allRecorded.length === 0) continue;
+
+        const latestRecordedStr = allRecorded[allRecorded.length - 1];
+        const latestMoment = moment(latestRecordedStr, "YYYY-MM-DD").startOf("day");
+
+        // If latest recorded activity is yesterday or today, no missed days
+        if (latestMoment.isSameOrAfter(yesterdayMoment)) continue;
+
+        // Collect missed days between latest activity and yesterday
+        const missedDays: string[] = [];
+        const check = latestMoment.clone().add(1, "day");
+        while (check.isSameOrBefore(yesterdayMoment)) {
+          const dStr = check.format("YYYY-MM-DD");
+          if (!streak.history.includes(dStr) && !streak.freezeHistory.includes(dStr)) {
+            missedDays.push(dStr);
+          }
+          check.add(1, "day");
+        }
+
+        if (missedDays.length === 0) continue;
+
+        // If missed days can be covered by available quota, auto-freeze each missed day
+        if (missedDays.length <= available) {
+          for (const dStr of missedDays) {
+            streak.freezeHistory.push(dStr);
+            available--;
+            totalCount++;
+            anyApplied = true;
+          }
+          streak.frozenUntil = missedDays[missedDays.length - 1];
+          this.recalculateStreak(streak);
+          messages.push(`Auto-froze "${streak.name}" for ${missedDays.length} missed day${missedDays.length > 1 ? "s" : ""} (${missedDays.join(", ")})`);
+        }
+      } else {
+        // Non-daily habits (weekly, monthly, yearly):
+        // Check if previous cycle was completed or frozen
+        const prevCycle = this.getPreviousCycleKey(streak);
+        const wasCompleted = this.isCycleCompleted(streak, prevCycle);
+        const wasFrozen = this.isCycleFrozen(streak, prevCycle);
+
+        if (!wasCompleted && !wasFrozen && available >= 1) {
+          let freezeDateStr = moment().subtract(1, "day").format("YYYY-MM-DD");
+          if (freq === "weekly") {
+            freezeDateStr = moment().subtract(1, "week").endOf("isoWeek").format("YYYY-MM-DD");
+          } else if (freq === "monthly") {
+            freezeDateStr = moment().subtract(1, "month").endOf("month").format("YYYY-MM-DD");
+          } else if (freq === "yearly") {
+            freezeDateStr = moment().subtract(1, "year").endOf("year").format("YYYY-MM-DD");
+          }
+
+          if (!streak.freezeHistory.includes(freezeDateStr)) {
+            streak.freezeHistory.push(freezeDateStr);
+            streak.frozenUntil = freezeDateStr;
+            available--;
+            totalCount++;
+            anyApplied = true;
+            streak.journal = this.encodeHabitJournal(streak.history, streak.freezeHistory, streak.startDate);
+            messages.push(`Auto-froze "${streak.name}" for missed ${freq} cycle (${prevCycle})`);
+          }
+        }
+      }
+    }
+
+    return { applied: anyApplied, count: totalCount, messages };
+  }
+
+  /**
    * Checks if the streak was completed today
    */
   public isCompletedToday(streak: StreakItem): boolean {
@@ -635,8 +800,11 @@ export class StreakService {
             continue;
           }
 
-          // Check continuation
-          const wasContinuation = streak.lastCompletedCycle === prevCycle || this.isFrozen(streak);
+          // Check continuation: previous cycle completed, or habit currently frozen, or previous cycle was frozen
+          const isPrevFrozen = freq === "daily"
+            ? (streak.freezeHistory && streak.freezeHistory.includes(prevCycle))
+            : this.isCycleFrozen(streak, prevCycle);
+          const wasContinuation = streak.lastCompletedCycle === prevCycle || this.isFrozen(streak) || isPrevFrozen;
           if (wasContinuation) {
             streak.currentStreak = (streak.currentStreak || 0) + 1;
           } else {
@@ -888,7 +1056,7 @@ export class StreakService {
     let current = 0;
     let checkDate = completedSet.has(todayStr)
       ? moment()
-      : (freezeSet.has(todayStr) || completedSet.has(yesterdayStr) ? moment().subtract(1, "day") : null);
+      : (freezeSet.has(todayStr) || freezeSet.has(yesterdayStr) || completedSet.has(yesterdayStr) ? moment().subtract(1, "day") : null);
 
     if (checkDate) {
       while (true) {

@@ -22,6 +22,30 @@ export class CalendarService {
   }
 
   /**
+   * Resolves the Google Calendar iCal URL from Obsidian Keychain (SecretStorage) or plain settings
+   */
+  public getCalendarUrl(settings: OSDashboardSettings): string {
+    if (settings.googleCalendarUseKeychain || settings.googleCalendarSecretId) {
+      const secretStorage = (this.app as any).secretStorage;
+      if (secretStorage && typeof secretStorage.getSecret === "function" && settings.googleCalendarSecretId) {
+        const secret = secretStorage.getSecret(settings.googleCalendarSecretId);
+        if (secret && typeof secret === "string" && secret.trim()) {
+          return secret.trim();
+        }
+      }
+    }
+    return settings.googleCalendarUrl ? settings.googleCalendarUrl.trim() : "";
+  }
+
+  /**
+   * Checks whether Obsidian native SecretStorage (Keychain) is supported by this Obsidian version
+   */
+  public isKeychainAvailable(): boolean {
+    const secretStorage = (this.app as any).secretStorage;
+    return Boolean(secretStorage && typeof secretStorage.getSecret === "function");
+  }
+
+  /**
    * Fetches and parses an iCal (.ics) feed URL (e.g. Google Calendar secret address)
    */
   public async fetchEvents(icsUrl: string): Promise<CalendarEventItem[]> {

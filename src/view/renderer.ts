@@ -1,5 +1,5 @@
 import { App, Component, MarkdownRenderer, setIcon, Notice, TFile, Platform, WorkspaceLeaf, Menu } from "obsidian";
-import { OSDashboardSettings, TaskItem, ProjectItem, FolderCard, RecentNoteItem, DashboardLink, CustomWidget, StreakItem, CalendarEventItem, DashboardWidgetLayout, DEFAULT_WIDGET_LAYOUT, moment, hexToRgb } from "../types";
+import { OSDashboardSettings, TaskItem, ProjectItem, FolderCard, RecentNoteItem, DashboardLink, CustomWidget, CustomWidgetButton, WidgetCustomization, StreakItem, CalendarEventItem, DashboardWidgetLayout, DEFAULT_WIDGET_LAYOUT, moment, hexToRgb } from "../types";
 import { NavigationService } from "../services/navigationService";
 import { TaskService } from "../services/taskService";
 import { RecentNotesService } from "../services/recentNotesService";
@@ -18,6 +18,8 @@ import { ArchiveOrDeleteStreakModal } from "../modals/archiveOrDeleteStreakModal
 import { HabitDetailsModal } from "../modals/habitDetailsModal";
 import { EventModal } from "../modals/eventModal";
 import { QuoteModal } from "../modals/quoteModal";
+import { FolderStyleModal } from "../modals/folderStyleModal";
+import { GoogleCalendarAddressModal } from "../modals/googleCalendarAddressModal";
 
 export class DashboardRenderer extends Component {
   private app: App;
@@ -105,6 +107,14 @@ export class DashboardRenderer extends Component {
     this.destroy();
     container.empty();
     container.addClass("os-dashboard-root");
+
+    // Apply mobile top margin variable on mobile (in both portrait and horizontal modes)
+    if (Platform.isMobile || Platform.isPhone) {
+      const topMargin = typeof this.settings.mobileTopMargin === "number" ? this.settings.mobileTopMargin : 48;
+      container.style.setProperty("--os-dashboard-mobile-top-margin", `${topMargin}px`);
+    } else {
+      container.style.removeProperty("--os-dashboard-mobile-top-margin");
+    }
 
     const scrollContainer = container.createDiv({ cls: "os-dashboard-container" });
 
@@ -253,7 +263,8 @@ export class DashboardRenderer extends Component {
     setIcon(avatarBox, this.settings.vaultAvatarIcon || "home");
 
     const titleGroup = headerRow.createDiv({ cls: "os-dashboard-title-group" });
-    titleGroup.createEl("h1", { cls: "os-dashboard-title", text: this.settings.vaultTitle || "SSK_OS" });
+    const vaultTitle = this.settings.vaultTitle?.trim() || this.app.vault.getName() || "Dashboard";
+    titleGroup.createEl("h1", { cls: "os-dashboard-title", text: vaultTitle });
     titleGroup.createDiv({ cls: "os-dashboard-subtitle", text: this.settings.vaultSubtitle || "Think • Learn • Build • Create • Grow" });
 
     // Main Quote Callout
@@ -317,8 +328,52 @@ export class DashboardRenderer extends Component {
       const titleEl = cardEl.createDiv({ cls: "os-folder-title", text: card.name });
       const subtitleEl = cardEl.createDiv({ cls: "os-folder-subtitle", text: card.subtitle || (card.hasHome ? "Open Home" : "Create Note") });
 
+      cardEl.setAttribute("title", `Click to open. Right-click to customize icon & color.`);
+
       cardEl.addEventListener("click", async () => {
         await this.navigationService.handleFolderClick(card, this.settings);
+      });
+
+      cardEl.addEventListener("contextmenu", (e: MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const menu = new Menu();
+
+        menu.addItem(item => {
+          item.setTitle("Customize Icon & Color...")
+            .setIcon("palette")
+            .onClick(() => {
+              new FolderStyleModal(
+                this.app,
+                card.path,
+                card.name,
+                this.settings,
+                this.iconService,
+                async () => {
+                  if (this.onSaveSettings) await this.onSaveSettings();
+                  if (this.rootContainerEl) await this.render(this.rootContainerEl);
+                }
+              ).open();
+            });
+        });
+
+        const hasOverride = this.settings.folderOverrides && (this.settings.folderOverrides[card.path] || this.settings.folderOverrides[card.name]);
+        if (hasOverride) {
+          menu.addItem(item => {
+            item.setTitle("Reset to Default Style")
+              .setIcon("rotate-ccw")
+              .onClick(async () => {
+                if (this.settings.folderOverrides) {
+                  delete this.settings.folderOverrides[card.path];
+                  delete this.settings.folderOverrides[card.name];
+                }
+                if (this.onSaveSettings) await this.onSaveSettings();
+                if (this.rootContainerEl) await this.render(this.rootContainerEl);
+              });
+          });
+        }
+
+        menu.showAtMouseEvent(e);
       });
     }
 
@@ -463,6 +518,7 @@ export class DashboardRenderer extends Component {
       if (!placed.has(cid)) {
         if (cw.column === 2) col2.push(cid);
         else if (cw.column === 3) col3.push(cid);
+        else if (cw.column === "rail") rail.push(cid);
         else col1.push(cid);
         placed.add(cid);
       }
@@ -703,6 +759,32 @@ export class DashboardRenderer extends Component {
     }
   }
 
+  private applyWidgetCustomization(
+    widgetId: string,
+    defaultTitle: string,
+    defaultIcon: string,
+    titleLeft: HTMLElement,
+    iconEl: HTMLElement,
+    defaultColor?: string
+  ): void {
+    const custom = this.settings.widgetCustomizations?.[widgetId];
+    const finalIcon = custom?.icon || defaultIcon;
+    const finalColor = custom?.color || defaultColor;
+
+    setIcon(iconEl, finalIcon);
+    if (finalColor) {
+      iconEl.style.color = finalColor;
+      const svg = iconEl.querySelector("svg");
+      if (svg) svg.style.stroke = finalColor;
+    }
+
+    const titleCol = titleLeft.createDiv({ cls: "os-card-title-col" });
+    titleCol.createEl("h3", { text: custom?.title || defaultTitle });
+    if (custom?.description) {
+      titleCol.createSpan({ cls: "os-card-desc", text: custom.description });
+    }
+  }
+
   // --- Column 1 Widgets ---
 
   private async renderTodayTasks(container: HTMLElement): Promise<void> {
@@ -712,8 +794,7 @@ export class DashboardRenderer extends Component {
     const header = cardEl.createDiv({ cls: "os-card-header os-card-header-tabs" });
     const headerLeft = header.createDiv({ cls: "os-card-header-left os-today-header-left" });
     const iconEl = headerLeft.createSpan({ cls: "os-card-icon" });
-    setIcon(iconEl, "check-circle");
-    headerLeft.createEl("h3", { text: "Daily" });
+    this.applyWidgetCustomization("todayTasks", "Daily", "check-circle", headerLeft, iconEl);
     const tabsWrap = headerLeft.createDiv({ cls: "os-today-tab-group" });
 
     // 1. Task Tab
@@ -731,8 +812,8 @@ export class DashboardRenderer extends Component {
     const logTabBtn = tabsWrap.createEl("button", {
       cls: `os-today-tab-btn ${this.activeTodayTab === "log" ? "is-active" : ""}`
     });
-    logTabBtn.setAttribute("title", "Daily Log");
-    logTabBtn.setAttribute("aria-label", "Daily Log");
+    logTabBtn.setAttribute("title", "Daily Logs");
+    logTabBtn.setAttribute("aria-label", "Daily Logs");
     const logIcon = logTabBtn.createSpan({ cls: "os-today-tab-icon" });
     setIcon(logIcon, "clipboard-list");
     logTabBtn.createSpan({ cls: "os-today-tab-label", text: "Log" });
@@ -803,12 +884,21 @@ export class DashboardRenderer extends Component {
     bodyEl.empty();
 
     const planFilePath = this.settings.dailyTasksFile;
-    const logFilePath = this.settings.dailyLogFile || "Daily Log.md";
+    const logFilePath = this.settings.dailyLogFile || "Daily Logs.md";
     const habitsFilePath = this.settings.habitsFile || "Habits.md";
 
     // Auto-populate active, non-frozen streak items into today's tasks
     if (this.streakService) {
       const habits = await this.streakService.loadHabits(habitsFilePath, this.settings.streaks || []);
+      if (this.settings.autoFreezeHabits) {
+        const autoRes = this.streakService.checkAndApplyAutoFreeze(habits, this.settings.maxFreezesPerMonth || 4, true);
+        if (autoRes.applied) {
+          await this.streakService.saveHabits(habitsFilePath, habits, this.settings.maxFreezesPerMonth || 4);
+          for (const msg of autoRes.messages) {
+            new Notice(`[OS Dashboard] ${msg}`);
+          }
+        }
+      }
       this.settings.streaks = habits;
       await this.streakService.autoPopulateTasks(planFilePath, habits, this.taskService);
     }
@@ -1119,8 +1209,7 @@ export class DashboardRenderer extends Component {
     const header = cardEl.createDiv({ cls: "os-card-header" });
     const titleLeft = header.createDiv({ cls: "os-card-header-left" });
     const iconEl = titleLeft.createSpan({ cls: "os-card-icon" });
-    setIcon(iconEl, "calendar");
-    titleLeft.createEl("h3", { text: "This Week" });
+    this.applyWidgetCustomization("weeklyTasks", "This Week", "calendar", titleLeft, iconEl);
 
     const listEl = cardEl.createDiv({ cls: "os-task-list" });
     const weeklyTasks = await this.taskService.getWeeklyTasks(this.settings.weeklyTasksFile);
@@ -1347,8 +1436,7 @@ export class DashboardRenderer extends Component {
     const header = cardEl.createDiv({ cls: "os-card-header" });
     const titleLeft = header.createDiv({ cls: "os-card-header-left" });
     const iconEl = titleLeft.createSpan({ cls: "os-card-icon" });
-    setIcon(iconEl, "file-text");
-    titleLeft.createEl("h3", { text: "Recent Notes" });
+    this.applyWidgetCustomization("recentNotes", "Recent Notes", "file-text", titleLeft, iconEl);
 
     const listEl = cardEl.createDiv({ cls: "os-recent-list" });
     const recentNotes = this.recentNotesService.getRecentNotes(this.settings);
@@ -1381,8 +1469,7 @@ export class DashboardRenderer extends Component {
     const header = cardEl.createDiv({ cls: "os-card-header" });
     const titleLeft = header.createDiv({ cls: "os-card-header-left" });
     const iconEl = titleLeft.createSpan({ cls: "os-card-icon" });
-    setIcon(iconEl, "edit-3");
-    titleLeft.createEl("h3", { text: "Quick Capture" });
+    this.applyWidgetCustomization("quickCapture", "Quick Capture", "edit-3", titleLeft, iconEl);
 
     const textarea = cardEl.createEl("textarea", {
       cls: "os-capture-input",
@@ -1412,8 +1499,7 @@ export class DashboardRenderer extends Component {
     const header = cardEl.createDiv({ cls: "os-card-header" });
     const titleLeft = header.createDiv({ cls: "os-card-header-left" });
     const iconEl = titleLeft.createSpan({ cls: "os-card-icon" });
-    setIcon(iconEl, "target");
-    titleLeft.createEl("h3", { text: "Ongoing Projects" });
+    this.applyWidgetCustomization("ongoingProjects", "Ongoing Projects", "target", titleLeft, iconEl);
 
     const listEl = cardEl.createDiv({ cls: "os-project-list" });
     const projects = await this.projectService.getOngoingProjects(this.settings);
@@ -1456,8 +1542,7 @@ export class DashboardRenderer extends Component {
     const header = cardEl.createDiv({ cls: "os-card-header" });
     const titleLeft = header.createDiv({ cls: "os-card-header-left" });
     const iconEl = titleLeft.createSpan({ cls: "os-card-icon" });
-    setIcon(iconEl, "link-2");
-    titleLeft.createEl("h3", { text: "Links" });
+    this.applyWidgetCustomization("bookmarks", "Links", "link-2", titleLeft, iconEl);
 
     const grid = cardEl.createDiv({ cls: "os-links-grid" });
     const links = this.settings.links || [];
@@ -1471,7 +1556,7 @@ export class DashboardRenderer extends Component {
       const item = grid.createDiv({ cls: "os-link-item" });
 
       const iconWrap = item.createSpan({ cls: "os-link-icon" });
-      setIcon(iconWrap, link.icon || "external-link");
+      this.iconService.renderAnyIcon(iconWrap, link.icon, "external-link");
 
       item.createSpan({ cls: "os-link-title", text: link.title });
 
@@ -1491,8 +1576,8 @@ export class DashboardRenderer extends Component {
     }
   }
 
-  private async renderCustomWidgetsForColumn(container: HTMLElement, colIndex: 1 | 2 | 3): Promise<void> {
-    const customWidgets = (this.settings.customWidgets || []).filter(w => (w.enabled ?? true) && (Number(w.column) || 1) === colIndex);
+  private async renderCustomWidgetsForColumn(container: HTMLElement, colIndex: 1 | 2 | 3 | "rail"): Promise<void> {
+    const customWidgets = (this.settings.customWidgets || []).filter(w => (w.enabled ?? true) && (w.column === "rail" ? colIndex === "rail" : (Number(w.column) || 1) === colIndex));
     for (const widget of customWidgets) {
       await this.renderCustomWidget(container, widget);
     }
@@ -1504,11 +1589,22 @@ export class DashboardRenderer extends Component {
     const header = cardEl.createDiv({ cls: "os-card-header" });
     const titleLeft = header.createDiv({ cls: "os-card-header-left" });
     const iconEl = titleLeft.createSpan({ cls: "os-card-icon" });
-    setIcon(iconEl, widget.icon || "sparkles");
-    titleLeft.createEl("h3", { text: widget.title || "Custom Widget" });
+    this.iconService.renderAnyIcon(iconEl, widget.icon, "sparkles", widget.color);
+    const titleCol = titleLeft.createDiv({ cls: "os-card-title-col" });
+    titleCol.createEl("h3", { text: widget.title || "Custom Widget" });
+    if (widget.description) {
+      titleCol.createSpan({ cls: "os-card-desc", text: widget.description });
+    }
 
     if (widget.type === "markdown-note") {
-      const file = this.app.metadataCache.getFirstLinkpathDest(widget.content, "");
+      let targetPath = (widget.content || "").trim();
+      if (targetPath.startsWith("[[") && targetPath.endsWith("]]")) {
+        targetPath = targetPath.slice(2, -2).trim();
+      }
+      if (targetPath.includes("|")) {
+        targetPath = targetPath.split("|")[0].trim();
+      }
+      const file = this.app.metadataCache.getFirstLinkpathDest(targetPath, "");
       if (file instanceof TFile) {
         cardEl.setAttribute("data-source-file", file.path);
         const openBtn = header.createDiv({ cls: "os-card-header-btn" });
@@ -1538,24 +1634,101 @@ export class DashboardRenderer extends Component {
       } else {
         bodyEl.createDiv({ cls: "os-empty-placeholder", text: "No content configured." });
       }
+    } else if (widget.type === "dataview") {
+      const isDataviewActive = (this.app as any).plugins?.enabledPlugins?.has("dataview") || !!(this.app as any).plugins?.plugins?.dataview;
+      const bodyEl = cardEl.createDiv({ cls: "os-custom-dataview-body" });
+      if (widget.showTableHeader === false) {
+        bodyEl.addClass("is-hide-header");
+      }
+
+      // Refresh button in card header
+      const refreshBtn = header.createDiv({ cls: "os-card-header-btn", title: "Refresh query" });
+      setIcon(refreshBtn, "refresh-cw");
+
+      const renderQuery = async () => {
+        bodyEl.empty();
+        if (!isDataviewActive) {
+          const banner = bodyEl.createDiv({ cls: "os-dataview-missing-banner" });
+          const bannerIcon = banner.createSpan({ cls: "os-dataview-missing-icon" });
+          setIcon(bannerIcon, "alert-circle");
+          banner.createSpan({
+            text: "Dataview plugin is required to execute dynamic queries. Please install and enable Dataview from Community Plugins."
+          });
+          return;
+        }
+
+        const rawContent = (widget.content || "").trim();
+        if (!rawContent) {
+          bodyEl.createDiv({ cls: "os-empty-placeholder", text: "No Dataview query entered in settings." });
+          return;
+        }
+
+        let formatted = rawContent;
+        if (!formatted.startsWith("```")) {
+          const isJs = formatted.startsWith("dv.") || formatted.includes("await dv.") || formatted.startsWith("let ") || formatted.startsWith("const ");
+          const tag = isJs ? "dataviewjs" : "dataview";
+          formatted = "```" + tag + "\n" + formatted + "\n```";
+        }
+
+        try {
+          await MarkdownRenderer.render(this.app, formatted, bodyEl, "", this);
+        } catch (err: any) {
+          bodyEl.createDiv({
+            cls: "os-empty-placeholder",
+            text: `Query error: ${err?.message || "Could not render Dataview query"}`
+          });
+        }
+      };
+
+      refreshBtn.addEventListener("click", async () => {
+        refreshBtn.addClass("is-rotating");
+        await renderQuery();
+        window.setTimeout(() => refreshBtn.removeClass("is-rotating"), 500);
+      });
+
+      await renderQuery();
     } else if (widget.type === "link-button") {
       const bodyEl = cardEl.createDiv({ cls: "os-custom-link-body" });
-      const btn = bodyEl.createEl("button", {
-        cls: "os-custom-action-btn",
-        text: widget.title || "Open"
-      });
-      btn.addEventListener("click", () => {
-        if (widget.content.startsWith("http://") || widget.content.startsWith("https://")) {
-          window.open(widget.content, "_blank");
-        } else {
-          const file = this.app.metadataCache.getFirstLinkpathDest(widget.content, "");
-          if (file instanceof TFile) {
-            this.app.workspace.getLeaf(false).openFile(file);
-          } else {
-            new Notice(`Note not found: ${widget.content}`);
+      const buttonsList: CustomWidgetButton[] = (widget.buttons && widget.buttons.length > 0)
+        ? widget.buttons
+        : (widget.content ? [{ id: "default", label: widget.title || "Open", target: widget.content }] : []);
+
+      if (buttonsList.length === 0) {
+        bodyEl.createDiv({ cls: "os-empty-placeholder", text: "No buttons configured in settings." });
+      } else {
+        const btnGrid = bodyEl.createDiv({ cls: "os-custom-buttons-wrap" });
+        for (const btnItem of buttonsList) {
+          const btn = btnGrid.createEl("button", {
+            cls: "os-custom-action-btn",
+          });
+          if (btnItem.icon) {
+            const iconSpan = btn.createSpan({ cls: "os-custom-btn-icon" });
+            this.iconService.renderAnyIcon(iconSpan, btnItem.icon, "link");
           }
+          btn.createSpan({ text: btnItem.label || "Open" });
+          btn.addEventListener("click", () => {
+            const target = (btnItem.target || "").trim();
+            if (!target) return;
+            if (target.startsWith("http://") || target.startsWith("https://")) {
+              window.open(target, "_blank");
+            } else {
+              let cleanTarget = target;
+              if (cleanTarget.startsWith("[[") && cleanTarget.endsWith("]]")) {
+                cleanTarget = cleanTarget.slice(2, -2).trim();
+              }
+              if (cleanTarget.includes("|")) {
+                cleanTarget = cleanTarget.split("|")[0].trim();
+              }
+              const file = this.app.metadataCache.getFirstLinkpathDest(cleanTarget, "");
+              if (file instanceof TFile) {
+                this.app.workspace.getLeaf(false).openFile(file);
+              } else {
+                new Notice(`Note not found: ${cleanTarget || btnItem.target}`);
+              }
+            }
+          });
         }
-      });
+      }
     }
   }
 
@@ -1621,16 +1794,28 @@ export class DashboardRenderer extends Component {
     }
 
     const events = Array.from(eventMap.values());
-    const hasAddress = Boolean(this.settings.googleCalendarUrl);
+    const calUrl = this.calendarService.getCalendarUrl(this.settings);
+    const hasAddress = Boolean(calUrl);
 
     // 1. Clean Calendar Header
     const header = cardEl.createDiv({ cls: "os-calendar-header" });
 
     // Left Title
     const leftWrap = header.createDiv({ cls: "os-calendar-header-left" });
-    const title = leftWrap.createDiv({
+    const calCustom = this.settings.widgetCustomizations?.["calendar"];
+    if (calCustom?.icon) {
+      const calIcon = leftWrap.createSpan({ cls: "os-card-icon" });
+      setIcon(calIcon, calCustom.icon);
+      if (calCustom.color) {
+        calIcon.style.color = calCustom.color;
+        const svg = calIcon.querySelector("svg");
+        if (svg) svg.style.stroke = calCustom.color;
+      }
+    }
+    const calTitleCol = leftWrap.createDiv({ cls: "os-card-title-col" });
+    const title = calTitleCol.createDiv({
       cls: "os-calendar-title",
-      text: this.calendarDate.format("MMMM YYYY")
+      text: calCustom?.title ? `${calCustom.title} (${this.calendarDate.format("MMMM YYYY")})` : this.calendarDate.format("MMMM YYYY")
     });
     title.setAttribute("title", "Click to jump to today");
     title.addEventListener("click", async () => {
@@ -1638,6 +1823,9 @@ export class DashboardRenderer extends Component {
       this.selectedCalendarDate = moment().format("YYYY-MM-DD");
       await this.renderCalendarContent(cardEl);
     });
+    if (calCustom?.description) {
+      calTitleCol.createSpan({ cls: "os-card-desc", text: calCustom.description });
+    }
 
     // Right Actions
     const nav = header.createDiv({ cls: "os-calendar-nav" });
@@ -1652,6 +1840,30 @@ export class DashboardRenderer extends Component {
       e.stopPropagation();
       this.openEventModal(null, this.selectedCalendarDate);
     });
+
+    // Sync Google Calendar Button (if address configured)
+    if (hasAddress) {
+      const syncBtn = nav.createDiv({ cls: "os-calendar-nav-btn", title: "Sync Google Calendar" });
+      setIcon(syncBtn, "refresh-cw");
+      syncBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        syncBtn.addClass("os-spin");
+        try {
+          const currentUrl = this.calendarService.getCalendarUrl(this.settings);
+          if (!currentUrl) throw new Error("No Google Calendar address or keychain secret configured");
+          const evs = await this.calendarService.fetchEvents(currentUrl);
+          this.settings.cachedCalendarEvents = evs;
+          this.settings.lastCalendarSyncTime = Date.now();
+          if (this.onSaveSettings) await this.onSaveSettings();
+          new Notice(`Synced ${evs.length} events from Google Calendar!`);
+          await this.renderCalendarContent(cardEl);
+        } catch (err: any) {
+          new Notice(`Sync error: ${err?.message || "Failed to sync"}`);
+        } finally {
+          syncBtn.removeClass("os-spin");
+        }
+      });
+    }
 
     // View Toggle button (Month Grid vs Events List of this month)
     const viewBtn = nav.createDiv({
@@ -1687,25 +1899,47 @@ export class DashboardRenderer extends Component {
       this.renderMonthEventsList(cardEl, events);
     }
 
-    // 3. Connect Google Calendar Banner if no address set
-    if (!hasAddress) {
+    // 3. Connect Google Calendar Banner if no address set and banner not dismissed
+    const showBanner = !hasAddress && (this.settings.showGoogleCalendarBanner !== false);
+    if (showBanner) {
       const banner = cardEl.createDiv({ cls: "os-calendar-address-banner" });
-      banner.createSpan({ cls: "os-calendar-banner-text", text: "Sync Google Calendar events & reminders" });
-      const addAddrBtn = banner.createEl("button", { cls: "os-calendar-address-btn", text: "Add Address" });
+
+      const bannerLeft = banner.createDiv({ cls: "os-calendar-banner-left" });
+      const bannerIcon = bannerLeft.createSpan({ cls: "os-calendar-banner-icon" });
+      setIcon(bannerIcon, "calendar");
+      bannerLeft.createSpan({ cls: "os-calendar-banner-text", text: "Sync Google Calendar events & reminders" });
+
+      const bannerActions = banner.createDiv({ cls: "os-calendar-banner-actions" });
+
+      const addAddrBtn = bannerActions.createEl("button", { cls: "os-calendar-address-btn", text: "Add Address" });
       addAddrBtn.addEventListener("click", () => {
-        const input = prompt("Paste your Google Calendar Secret iCal Address (.ics):", "");
-        if (input && input.trim()) {
-          this.settings.googleCalendarUrl = input.trim();
-          this.calendarService.fetchEvents(this.settings.googleCalendarUrl).then(async (evs) => {
-            this.settings.cachedCalendarEvents = evs;
+        new GoogleCalendarAddressModal(
+          this.app,
+          this.settings,
+          this.calendarService,
+          async (result) => {
+            this.settings.googleCalendarUseKeychain = result.useKeychain;
+            this.settings.googleCalendarSecretId = result.secretId || "";
+            this.settings.googleCalendarUrl = result.url || "";
+            this.settings.cachedCalendarEvents = result.events;
             this.settings.lastCalendarSyncTime = Date.now();
             if (this.onSaveSettings) await this.onSaveSettings();
-            new Notice(`Synced ${evs.length} events from Google Calendar!`);
             await this.renderCalendarContent(cardEl);
-          }).catch(err => {
-            new Notice(`Sync error: ${err.message || "Invalid URL"}`);
-          });
-        }
+          }
+        ).open();
+      });
+
+      const dismissBtn = bannerActions.createDiv({
+        cls: "os-calendar-banner-dismiss",
+        title: "Dismiss notification (hide this banner)"
+      });
+      setIcon(dismissBtn, "x");
+      dismissBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        this.settings.showGoogleCalendarBanner = false;
+        if (this.onSaveSettings) await this.onSaveSettings();
+        banner.remove();
+        new Notice("Calendar banner dismissed. You can re-enable it in Settings anytime.");
       });
     }
   }
@@ -1904,8 +2138,7 @@ export class DashboardRenderer extends Component {
     const header = cardEl.createDiv({ cls: "os-card-header" });
     const titleLeft = header.createDiv({ cls: "os-card-header-left" });
     const iconEl = titleLeft.createSpan({ cls: "os-card-icon" });
-    setIcon(iconEl, "git-fork");
-    titleLeft.createEl("h3", { text: "Graph view" });
+    this.applyWidgetCustomization("graphView", "Graph view", "git-fork", titleLeft, iconEl);
 
     const headerActions = header.createDiv({ cls: "os-card-header-actions" });
 
@@ -2064,19 +2297,27 @@ export class DashboardRenderer extends Component {
     cardEl.empty();
 
     const habitsFilePath = this.settings.habitsFile || "Habits.md";
-    const archiveFilePath = this.settings.archiveHabitsFile || "99 Archive/Habit.md";
+    const archiveFilePath = this.settings.archiveHabitsFile || "99 Archive/Habits.md";
     const maxFreezes = this.settings.maxFreezesPerMonth || 4;
 
     // Load habits from markdown file
     const streaks = await this.streakService.loadHabits(habitsFilePath, this.settings.streaks || []);
+    if (this.settings.autoFreezeHabits) {
+      const autoRes = this.streakService.checkAndApplyAutoFreeze(streaks, maxFreezes, true);
+      if (autoRes.applied) {
+        await this.streakService.saveHabits(habitsFilePath, streaks, maxFreezes);
+        for (const msg of autoRes.messages) {
+          new Notice(`[OS Dashboard] ${msg}`);
+        }
+      }
+    }
     this.settings.streaks = streaks;
 
     // Header
     const header = cardEl.createDiv({ cls: "os-card-header" });
     const titleLeft = header.createDiv({ cls: "os-card-header-left" });
     const iconEl = titleLeft.createSpan({ cls: "os-card-icon" });
-    setIcon(iconEl, "flame");
-    titleLeft.createEl("h3", { text: "Streaks" });
+    this.applyWidgetCustomization("streaks", "Streaks", "flame", titleLeft, iconEl, "#f97316");
 
     const headerActions = header.createDiv({ cls: "os-card-header-actions" });
     const addBtn = headerActions.createDiv({ cls: "os-card-header-btn", title: "Add new habit" });
@@ -2371,8 +2612,7 @@ export class DashboardRenderer extends Component {
     const header = cardEl.createDiv({ cls: "os-card-header" });
     const titleLeft = header.createDiv({ cls: "os-card-header-left" });
     const iconEl = titleLeft.createSpan({ cls: "os-card-icon" });
-    setIcon(iconEl, "sparkles");
-    titleLeft.createEl("h3", { text: "Quote" });
+    this.applyWidgetCustomization("rightQuote", "Quote", "sparkles", titleLeft, iconEl);
 
     const headerActions = header.createDiv({ cls: "os-card-header-actions" });
     const editBtn = headerActions.createDiv({ cls: "os-card-header-btn", title: "Edit quote" });

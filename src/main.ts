@@ -8,6 +8,7 @@ import { TaskService } from "./services/taskService";
 import { RecentNotesService } from "./services/recentNotesService";
 import { QuickCaptureService } from "./services/quickCaptureService";
 import { ProjectService } from "./services/projectService";
+import { DeadlineService } from "./services/deadlineService";
 import { QuoteService } from "./services/quoteService";
 import { StreakService } from "./services/streakService";
 import { CalendarService } from "./services/calendarService";
@@ -22,6 +23,7 @@ export default class OSDashboardPlugin extends Plugin {
   public recentNotesService!: RecentNotesService;
   public quickCaptureService!: QuickCaptureService;
   public projectService!: ProjectService;
+  public deadlineService!: DeadlineService;
   public quoteService!: QuoteService;
   public streakService!: StreakService;
   public calendarService!: CalendarService;
@@ -36,6 +38,7 @@ export default class OSDashboardPlugin extends Plugin {
     this.recentNotesService = new RecentNotesService(this.app, this.iconService);
     this.quickCaptureService = new QuickCaptureService(this.app);
     this.projectService = new ProjectService(this.app, this.iconService);
+    this.deadlineService = new DeadlineService(this.app, this.iconService);
     this.quoteService = new QuoteService(this.app);
     this.streakService = new StreakService(this.app);
     this.calendarService = new CalendarService(this.app);
@@ -120,6 +123,7 @@ export default class OSDashboardPlugin extends Plugin {
         this.iconService,
         this.streakService,
         this.calendarService,
+        this.deadlineService,
         () => this.saveSettings()
       );
       await renderer.render(el);
@@ -199,6 +203,20 @@ export default class OSDashboardPlugin extends Plugin {
     if (this.settings.vaultTitle === "SSK_OS") {
       this.settings.vaultTitle = "";
       await this.saveData(this.settings);
+    }
+
+    // Migrate legacy default "03 Projects" to empty string so entire vault is searched
+    if (this.settings.projectsFolder === "03 Projects") {
+      this.settings.projectsFolder = "";
+    }
+    if (this.settings.deadlinesFolders === "03 Projects") {
+      this.settings.deadlinesFolders = "";
+    }
+    if (!this.settings.deadlineProp || this.settings.deadlineProp === "deadline") {
+      this.settings.deadlineProp = "target_completion_date";
+    }
+    if (!this.settings.bannerPath) {
+      this.settings.bannerPath = "https://images.unsplash.com/photo-1519681393784-d120267933ba?auto=format&fit=crop&w=1920&q=80";
     }
 
     // Clean up initial dummy mock streaks if present from previous version

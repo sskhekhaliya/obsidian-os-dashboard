@@ -1,5 +1,5 @@
 import { App, TFile } from "obsidian";
-import { ProjectItem, OSDashboardSettings } from "../types";
+import { ProjectItem, OSDashboardSettings, parseFolderList, isPathInFolderList } from "../types";
 import { IconService } from "./iconService";
 
 export class ProjectService {
@@ -26,7 +26,9 @@ export class ProjectService {
    * Scans project files and extracts progress percentage
    */
   public async getOngoingProjects(settings: OSDashboardSettings): Promise<ProjectItem[]> {
-    const projectsFolder = (settings.projectsFolder || "").toLowerCase().trim();
+    let rawProjectsFolder = (settings.projectsFolder || "").trim();
+    if (rawProjectsFolder === "03 Projects") rawProjectsFolder = "";
+    const folderList = parseFolderList(rawProjectsFolder);
     const statusProp = settings.projectStatusProp || "status";
     const statusValues = (settings.projectStatusValues || ["in-progress", "active", "ongoing"]).map(v => v.toLowerCase().trim());
     const progressProp = settings.projectProgressProp || "progress";
@@ -37,8 +39,8 @@ export class ProjectService {
     for (const file of allFiles) {
       if (file.path.startsWith(".")) continue;
 
-      // Filter by folder if specified
-      if (projectsFolder && !file.path.toLowerCase().startsWith(projectsFolder)) {
+      // Filter by folder(s) if specified
+      if (folderList.length > 0 && !isPathInFolderList(file.path, folderList)) {
         continue;
       }
 

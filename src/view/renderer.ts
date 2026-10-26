@@ -9,6 +9,7 @@ import { QuoteService } from "../services/quoteService";
 import { IconService } from "../services/iconService";
 import { StreakService } from "../services/streakService";
 import { CalendarService } from "../services/calendarService";
+import { DeadlineService } from "../services/deadlineService";
 import { ScheduleTaskModal } from "../modals/scheduleTaskModal";
 import { WikiLinkSuggest } from "../modals/wikiLinkSuggest";
 import { OverdueTasksModal } from "../modals/overdueTasksModal";
@@ -29,6 +30,7 @@ export class DashboardRenderer extends Component {
   private recentNotesService: RecentNotesService;
   private quickCaptureService: QuickCaptureService;
   private projectService: ProjectService;
+  private deadlineService: DeadlineService;
   private quoteService: QuoteService;
   private iconService: IconService;
   private streakService: StreakService;
@@ -59,6 +61,7 @@ export class DashboardRenderer extends Component {
     iconService: IconService,
     streakService?: StreakService,
     calendarService?: CalendarService,
+    deadlineService?: DeadlineService,
     onSaveSettings?: () => Promise<void>
   ) {
     super();
@@ -73,6 +76,7 @@ export class DashboardRenderer extends Component {
     this.iconService = iconService;
     this.streakService = streakService || new StreakService(app);
     this.calendarService = calendarService || new CalendarService(app);
+    this.deadlineService = deadlineService || new DeadlineService(app, this.iconService);
     this.onSaveSettings = onSaveSettings;
   }
 
@@ -186,7 +190,7 @@ export class DashboardRenderer extends Component {
     // Resolve Dynamic Drag-and-Drop Layout
     const layout = this.getResolvedLayout();
 
-    const isMobileView = Platform.isMobile || Platform.isPhone || (container.clientWidth > 0 && container.clientWidth < 850);
+    const isMobileView = Platform.isMobile || Platform.isPhone || (container.clientWidth > 0 && container.clientWidth < 500);
 
     if (isMobileView) {
       // Mobile: Render row-by-row interleaved widgets across columns and rail
@@ -208,7 +212,7 @@ export class DashboardRenderer extends Component {
         for (const entry of entries) {
           const w = entry.contentRect.width;
           if (w > 0) {
-            const nowMobile = w < 850;
+            const nowMobile = w < 500;
             if (nowMobile !== lastWasMobile) {
               lastWasMobile = nowMobile;
               this.render(container);
@@ -224,12 +228,15 @@ export class DashboardRenderer extends Component {
     const heroEl = container.createDiv({ cls: "os-dashboard-hero" });
 
     // Background banner
-    let bannerUrl = "";
-    if (this.settings.bannerPath) {
-      if (this.settings.bannerPath.startsWith("http://") || this.settings.bannerPath.startsWith("https://")) {
-        bannerUrl = this.settings.bannerPath;
+    const DEFAULT_BANNER = "https://images.unsplash.com/photo-1519681393784-d120267933ba?auto=format&fit=crop&w=1920&q=80";
+    let bannerUrl = DEFAULT_BANNER;
+    const customPath = (this.settings.bannerPath || "").trim();
+
+    if (customPath) {
+      if (customPath.startsWith("http://") || customPath.startsWith("https://")) {
+        bannerUrl = customPath;
       } else {
-        const bannerFile = this.app.vault.getAbstractFileByPath(this.settings.bannerPath);
+        const bannerFile = this.app.vault.getAbstractFileByPath(customPath);
         if (bannerFile instanceof TFile) {
           bannerUrl = this.app.vault.getResourcePath(bannerFile);
         }
@@ -477,7 +484,7 @@ export class DashboardRenderer extends Component {
     const defaultCols: DashboardWidgetLayout = {
       col1: ["todayTasks", "weeklyTasks"],
       col2: ["recentNotes", "quickCapture"],
-      col3: ["ongoingProjects", "bookmarks"],
+      col3: ["ongoingProjects", "deadlines", "bookmarks"],
       rail: ["calendar", "streaks", "graphView", "rightQuote"]
     };
 
@@ -493,7 +500,7 @@ export class DashboardRenderer extends Component {
     const col1 = Array.isArray(raw.col1) ? [...raw.col1] : [...defaultCols.col1];
     const col2 = Array.isArray(raw.col2) ? [...raw.col2] : [...defaultCols.col2];
     const col3 = Array.isArray(raw.col3) ? [...raw.col3] : [...defaultCols.col3];
-    const rail = Array.isArray(raw.rail) ? [...raw.rail] : [...defaultCols.rail];
+    const rail = Array.isArray(raw.rail) && raw.rail.length > 0 ? [...raw.rail] : [...defaultCols.rail];
 
     // Collect all placed widget IDs
     const placed = new Set<string>([...col1, ...col2, ...col3, ...rail]);
@@ -533,7 +540,11 @@ export class DashboardRenderer extends Component {
     let renderedCount = 0;
     for (const widgetId of widgetIds) {
       const prevCount = colEl.childElementCount;
-      await this.renderSingleWidget(colEl, widgetId);
+      try {
+        await this.renderSingleWidget(colEl, widgetId);
+      } catch (err) {
+        console.error(`[OS Dashboard] Error rendering widget "${widgetId}":`, err);
+      }
       if (colEl.childElementCount > prevCount) {
         const cardEl = colEl.lastElementChild as HTMLElement;
         this.attachDragAndDropToCard(cardEl, widgetId, colId);
@@ -572,6 +583,11 @@ export class DashboardRenderer extends Component {
       case "ongoingProjects":
         if (this.settings.showOngoingProjects ?? true) {
           await this.renderOngoingProjects(container);
+        }
+        break;
+      case "deadlines":
+        if (this.settings.showDeadlines ?? true) {
+          await this.renderDeadlinesWidget(container);
         }
         break;
       case "bookmarks":
@@ -775,7 +791,11 @@ export class DashboardRenderer extends Component {
     if (finalColor) {
       iconEl.style.color = finalColor;
       const svg = iconEl.querySelector("svg");
-      if (svg) svg.style.stroke = finalColor;
+      if (svg) {
+        svg.style.color = finalColor;
+        svg.style.stroke = finalColor;
+        svg.setAttribute("stroke", finalColor);
+      }
     }
 
     const titleCol = titleLeft.createDiv({ cls: "os-card-title-col" });
@@ -1532,6 +1552,129 @@ export class DashboardRenderer extends Component {
 
       row.addEventListener("click", () => {
         this.app.workspace.getLeaf(false).openFile(proj.file);
+      });
+    }
+  }
+
+  private async renderDeadlinesWidget(container: HTMLElement): Promise<void> {
+    const cardEl = container.createDiv({ cls: "os-dashboard-card os-card-deadlines" });
+
+    const header = cardEl.createDiv({ cls: "os-card-header" });
+    const titleLeft = header.createDiv({ cls: "os-card-header-left" });
+    const iconEl = titleLeft.createSpan({ cls: "os-card-icon" });
+    this.applyWidgetCustomization("deadlines", "Deadlines", "calendar-clock", titleLeft, iconEl, "#ef4444");
+
+    const listEl = cardEl.createDiv({ cls: "os-deadline-list" });
+    const deadlines = await this.deadlineService.getDeadlines(this.settings);
+
+    if (deadlines.length === 0) {
+      listEl.createDiv({
+        cls: "os-empty-placeholder",
+        text: "No active deadlines found. Add 'deadline: YYYY-MM-DD' to notes in configured folders."
+      });
+      return;
+    }
+
+    for (const item of deadlines) {
+      const row = listEl.createDiv({ cls: `os-deadline-row ${item.isOverdue ? "is-overdue" : ""}` });
+      row.setAttribute("title", `${item.title} • ${item.fullTimeDescription || item.formattedTimeLeft}`);
+
+      const left = row.createDiv({ cls: "os-deadline-left" });
+      const iconWrap = left.createSpan({ cls: "os-deadline-icon" });
+      this.iconService.renderIcon(iconWrap, item.resolvedIcon);
+
+      const titleGroup = left.createDiv({ cls: "os-deadline-title-group" });
+      titleGroup.createSpan({ cls: "os-deadline-title", text: item.title });
+
+      if (item.status) {
+        titleGroup.createSpan({ cls: "os-deadline-status-pill", text: item.status });
+      }
+
+      const right = row.createDiv({ cls: "os-deadline-right" });
+
+      let badgeCls = "os-deadline-badge";
+      if (item.isOverdue) {
+        badgeCls += " is-overdue";
+      } else if (item.isToday) {
+        badgeCls += " is-today";
+      } else if (item.daysLeft <= 3) {
+        badgeCls += " is-urgent";
+      } else if (item.daysLeft <= 7) {
+        badgeCls += " is-soon";
+      } else {
+        badgeCls += " is-normal";
+      }
+
+      const badge = right.createSpan({ cls: badgeCls });
+      badge.setAttribute("title", `${item.fullTimeDescription || item.formattedTimeLeft} • ${item.timeProgress}% timeline elapsed`);
+      if (item.isOverdue) {
+        const iconSpan = badge.createSpan({ cls: "os-deadline-badge-icon" });
+        setIcon(iconSpan, "alert-circle");
+      }
+      badge.createSpan({ text: item.formattedTimeLeft });
+
+      // Small circular progress gauge according to current/deadline
+      const circleWrap = right.createDiv({ cls: "os-deadline-circle-wrap" });
+      circleWrap.setAttribute("title", `${item.timeProgress}% timeline elapsed • ${item.fullTimeDescription || item.formattedTimeLeft}`);
+      circleWrap.setAttribute("aria-label", `${item.timeProgress}% time elapsed`);
+
+      let ringColor = "var(--interactive-accent, #8b5cf6)";
+      if (item.isOverdue) {
+        ringColor = "#ef4444";
+      } else if (item.isToday) {
+        ringColor = "#f97316";
+      } else if (item.daysLeft <= 3) {
+        ringColor = "#f59e0b";
+      } else if (item.daysLeft <= 7) {
+        ringColor = "#3b82f6";
+      }
+
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", "0 0 20 20");
+      svg.setAttribute("class", `os-deadline-circle ${item.isOverdue ? "is-overdue" : ""}`);
+      svg.setAttribute("width", "18");
+      svg.setAttribute("height", "18");
+
+      const bgCircle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      bgCircle.setAttribute("cx", "10");
+      bgCircle.setAttribute("cy", "10");
+      bgCircle.setAttribute("r", "7.5");
+      bgCircle.setAttribute("class", "os-deadline-circle-bg");
+      bgCircle.setAttribute("fill", "none");
+      bgCircle.setAttribute("stroke-width", "2.2");
+
+      const circ = 2 * Math.PI * 7.5; // ~47.12
+      const offset = circ - (item.timeProgress / 100) * circ;
+
+      const fgCircle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      fgCircle.setAttribute("cx", "10");
+      fgCircle.setAttribute("cy", "10");
+      fgCircle.setAttribute("r", "7.5");
+      fgCircle.setAttribute("class", "os-deadline-circle-fg");
+      fgCircle.setAttribute("fill", "none");
+      fgCircle.setAttribute("stroke-width", "2.2");
+      fgCircle.setAttribute("stroke", ringColor);
+      fgCircle.setAttribute("stroke-dasharray", circ.toFixed(2));
+      fgCircle.setAttribute("stroke-dashoffset", offset.toFixed(2));
+      fgCircle.setAttribute("stroke-linecap", "round");
+      fgCircle.setAttribute("transform", "rotate(-90 10 10)");
+
+      svg.appendChild(bgCircle);
+      svg.appendChild(fgCircle);
+
+      if (item.isOverdue) {
+        const centerDot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        centerDot.setAttribute("cx", "10");
+        centerDot.setAttribute("cy", "10");
+        centerDot.setAttribute("r", "2");
+        centerDot.setAttribute("fill", "#ef4444");
+        svg.appendChild(centerDot);
+      }
+
+      circleWrap.appendChild(svg);
+
+      row.addEventListener("click", () => {
+        this.app.workspace.getLeaf(false).openFile(item.file);
       });
     }
   }

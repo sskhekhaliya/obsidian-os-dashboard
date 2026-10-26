@@ -43,6 +43,7 @@ export class OSDashboardView extends ItemView {
       this.plugin.iconService,
       this.plugin.streakService,
       this.plugin.calendarService,
+      this.plugin.deadlineService,
       () => this.plugin.saveSettings()
     );
 

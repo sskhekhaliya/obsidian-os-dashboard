@@ -40,6 +40,13 @@ A sleek personal operating system dashboard for your Obsidian vault, inspired by
   - Google Calendar secret iCal sync support.
   - Quick event scheduling and date-based task planning.
 - **Ongoing Projects with Progress Bars:** Scans notes with `status: in-progress` and displays progress bars based on manual `progress: 60%` property or auto-calculated checkbox ratios.
+- **Deadlines & Milestones Tracker:**
+  - Live query of target dates and milestones across your vault notes.
+  - Configurable target property (default: `target_completion_date`, with aliases like `deadline`, `due`).
+  - Circular SVG timeline progress rings showing elapsed time from note creation/start date to deadline.
+  - Clean shorthand indicators (`Today`, `1d`, `3w`, `2m`, and red overdue alerts like `-4d`) with rich tooltips.
+  - Dynamic status label tags (`[in-progress]`, `[evolve]`, `[need-review]`) displayed alongside note titles.
+  - Completed milestones clear automatically when `completed_date` is marked or filled.
 - **Links & Bookmarks:** Quick-launcher for external web tools and internal vault notes.
 - **Dedicated View & Codeblock:** Open as a standalone home tab, or embed anywhere in your vault using ````os-dashboard````.
 
@@ -54,7 +61,7 @@ A sleek personal operating system dashboard for your Obsidian vault, inspired by
      ```
      ````
 2. **Settings:**
-   - Open **Settings** > **OS Dashboard** to configure banner images, quotes, task paths, project folders, and bookmark links.
+   - Open **Settings** > **OS Dashboard** to customize your hero banner, navigation ribbon, widget order, and configure individual built-in widgets (Tasks, Quick Capture, Projects, Deadlines, Habit Streaks, Calendar & Google Calendar Sync, and Quotes) with collapsible accordions.
 
 ---
 

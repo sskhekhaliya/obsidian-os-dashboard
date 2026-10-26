@@ -1,16 +1,17 @@
 import { App, PluginSettingTab, Setting, setIcon, Notice } from "obsidian";
 import * as obsidian from "obsidian";
 import type OSDashboardPlugin from "./main";
-import { CustomWidget, CustomWidgetButton, WidgetCustomization, OSDashboardSettings, StreakItem, DashboardWidgetLayout, moment, getDailyNotesFormat } from "./types";
+import { CustomWidget, CustomWidgetButton, WidgetCustomization, OSDashboardSettings, StreakItem, DashboardWidgetLayout, moment, getDailyNotesFormat, getRandomAestheticBanner } from "./types";
 import { IconService } from "./services/iconService";
 import { FileSuggest } from "./modals/fileSuggest";
 import { WikiLinkSuggest } from "./modals/wikiLinkSuggest";
 
-type SettingsTabId = "general" | "navigation" | "widgets" | "streaks" | "tasks-projects" | "bookmarks";
+type SettingsTabId = "general" | "navigation" | "widgets" | "tasks-projects" | "bookmarks";
 
 export class OSDashboardSettingTab extends PluginSettingTab {
   private plugin: OSDashboardPlugin;
   private activeTab: SettingsTabId = "general";
+  private openSections: Set<string> = new Set();
 
   constructor(app: App, plugin: OSDashboardPlugin) {
     super(app, plugin);
@@ -30,8 +31,7 @@ export class OSDashboardSettingTab extends PluginSettingTab {
       { id: "general", label: "General", icon: "settings" },
       { id: "navigation", label: "Navigation", icon: "folder-tree" },
       { id: "widgets", label: "Widgets", icon: "layout-grid" },
-      { id: "tasks-projects", label: "Tasks & Projects", icon: "check-square" },
-      { id: "streaks", label: "Streaks & Rail", icon: "flame" },
+      { id: "tasks-projects", label: "Configure Widgets", icon: "sliders" },
       { id: "bookmarks", label: "Bookmarks", icon: "bookmark" }
     ];
 
@@ -63,9 +63,6 @@ export class OSDashboardSettingTab extends PluginSettingTab {
         break;
       case "tasks-projects":
         this.renderTasksProjectsTab(tabContent);
-        break;
-      case "streaks":
-        this.renderStreaksRailTab(tabContent);
         break;
       case "bookmarks":
         this.renderBookmarksTab(tabContent);
@@ -143,13 +140,25 @@ export class OSDashboardSettingTab extends PluginSettingTab {
 
     new Setting(container)
       .setName("Banner Image Path or URL")
-      .setDesc("Path to an image in your vault (e.g. 'Attachments/banner.png') or an online image URL.")
+      .setDesc("Path to an image in your vault or an online image URL. Defaults to an aesthetic Unsplash panorama.")
       .addText(text => {
-        text.setPlaceholder("path/to/banner.jpg or https://...")
+        text.setPlaceholder("https://images.unsplash.com/... or banner.png")
           .setValue(this.plugin.settings.bannerPath)
           .onChange(async (val) => {
             this.plugin.settings.bannerPath = val.trim();
             await this.plugin.saveSettings();
+          });
+        text.inputEl.style.width = "240px";
+      })
+      .addButton(btn => {
+        btn.setButtonText("🎲 Random Unsplash")
+          .setTooltip("Load a new random aesthetic Unsplash photo")
+          .onClick(async () => {
+            const newBanner = getRandomAestheticBanner();
+            this.plugin.settings.bannerPath = newBanner;
+            await this.plugin.saveSettings();
+            new Notice("Aesthetic Unsplash banner applied!");
+            this.display();
           });
       });
 
@@ -458,15 +467,27 @@ export class OSDashboardSettingTab extends PluginSettingTab {
   // =========================================================================
   // 3. WIDGETS MANAGER TAB
   // =========================================================================
+  // =========================================================================
+  // 3. WIDGETS TAB (COLLAPSIBLE SECTIONS)
+  // =========================================================================
   private renderWidgetsTab(container: HTMLElement): void {
-    container.createEl("h3", { text: "Header & Navigation Visibility" });
-    const descTop = container.createEl("p", {
-      text: "Toggle top-level hero banner and folder navigation bar on your dashboard.",
+    const intro = container.createEl("div", { cls: "os-settings-tab-intro" });
+    intro.createEl("h3", { text: "Dashboard Widgets & Layout" });
+    intro.createEl("p", {
+      text: "Customize widget visibility, appearance, accent colors, and column arrangement.",
       cls: "setting-item-description"
     });
-    descTop.style.marginBottom = "14px";
 
-    new Setting(container)
+    // 1. Header & Navigation Visibility
+    const headerContent = this.createCollapsibleSection(
+      container,
+      "Header & Navigation Visibility",
+      "layout-template",
+      "Toggle top-level hero banner and folder navigation bar",
+      false
+    );
+
+    new Setting(headerContent)
       .setName("Hero Banner")
       .setDesc("Top banner with vault identity, quotes, and live clock.")
       .addToggle(toggle => {
@@ -477,7 +498,7 @@ export class OSDashboardSettingTab extends PluginSettingTab {
           });
       });
 
-    new Setting(container)
+    new Setting(headerContent)
       .setName("Smart Navigation Ribbon")
       .setDesc("1st-level folder shortcuts with inherited icons and colors.")
       .addToggle(toggle => {
@@ -488,28 +509,33 @@ export class OSDashboardSettingTab extends PluginSettingTab {
           });
       });
 
-    container.createEl("h3", { text: "Main Grid Default Widgets" });
-    const descMain = container.createEl("p", {
-      text: "Customize title, Lucide icon, accent color, and optional subtitle description for each built-in main card.",
-      cls: "setting-item-description"
-    });
-    descMain.style.marginBottom = "14px";
+    // 2. Main Grid Default Widgets
+    const mainGridContent = this.createCollapsibleSection(
+      container,
+      "Main Grid Default Widgets",
+      "layout-grid",
+      "Toggle cards and click to customize title, icon, or accent color",
+      true
+    );
 
-    this.renderDefaultWidgetCard(container, "todayTasks", "Daily Tasks (Plan & Log)", "Daily", "check-circle", "showTodayTasks", "#8b5cf6");
-    this.renderDefaultWidgetCard(container, "weeklyTasks", "Weekly Planning", "This Week", "calendar", "showWeeklyTasks", "#8b5cf6");
-    this.renderDefaultWidgetCard(container, "recentNotes", "Recent Notes", "Recent Notes", "file-text", "showRecentNotes", "#8b5cf6");
-    this.renderDefaultWidgetCard(container, "quickCapture", "Quick Capture", "Quick Capture", "edit-3", "showQuickCapture", "#8b5cf6");
-    this.renderDefaultWidgetCard(container, "ongoingProjects", "Ongoing Projects", "Ongoing Projects", "target", "showOngoingProjects", "#8b5cf6");
-    this.renderDefaultWidgetCard(container, "bookmarks", "Bookmarks & Links", "Links", "link-2", "showBookmarks", "#8b5cf6");
+    this.renderDefaultWidgetCard(mainGridContent, "todayTasks", "Daily Tasks (Plan & Log)", "Daily", "check-circle", "showTodayTasks", "#8b5cf6");
+    this.renderDefaultWidgetCard(mainGridContent, "weeklyTasks", "Weekly Planning", "This Week", "calendar", "showWeeklyTasks", "#8b5cf6");
+    this.renderDefaultWidgetCard(mainGridContent, "recentNotes", "Recent Notes", "Recent Notes", "file-text", "showRecentNotes", "#8b5cf6");
+    this.renderDefaultWidgetCard(mainGridContent, "quickCapture", "Quick Capture", "Quick Capture", "edit-3", "showQuickCapture", "#8b5cf6");
+    this.renderDefaultWidgetCard(mainGridContent, "ongoingProjects", "Ongoing Projects", "Ongoing Projects", "target", "showOngoingProjects", "#8b5cf6");
+    this.renderDefaultWidgetCard(mainGridContent, "deadlines", "Deadlines Tracker", "Deadlines", "calendar-clock", "showDeadlines", "#ef4444");
+    this.renderDefaultWidgetCard(mainGridContent, "bookmarks", "Bookmarks & Links", "Links", "link-2", "showBookmarks", "#8b5cf6");
 
-    container.createEl("h3", { text: "Right Side Companion Rail Widgets" });
-    const descRail = container.createEl("p", {
-      text: "Companion rail on the right side containing Calendar, Graph view, Streaks tracker, and Quote card.",
-      cls: "setting-item-description"
-    });
-    descRail.style.marginBottom = "14px";
+    // 3. Right Side Companion Rail Widgets
+    const railContent = this.createCollapsibleSection(
+      container,
+      "Right Side Companion Rail Widgets",
+      "sidebar",
+      "Companion rail containing Calendar, Graph view, Streaks tracker, and Quote card",
+      false
+    );
 
-    new Setting(container)
+    new Setting(railContent)
       .setName("Enable Right Side Rail")
       .setDesc("Master toggle to show or hide the entire right companion rail.")
       .addToggle(toggle => {
@@ -520,14 +546,21 @@ export class OSDashboardSettingTab extends PluginSettingTab {
           });
       });
 
-    this.renderDefaultWidgetCard(container, "calendar", "Calendar Widget", "Calendar", "calendar", "showCalendar", "#8b5cf6");
-    this.renderDefaultWidgetCard(container, "graphView", "Graph View Widget", "Graph view", "git-fork", "showGraphView", "#8b5cf6");
-    this.renderDefaultWidgetCard(container, "streaks", "Streaks Tracker Widget", "Streaks", "flame", "showStreaks", "#f97316");
-    this.renderDefaultWidgetCard(container, "rightQuote", "Inspirational Quote Card", "Quote", "sparkles", "showRightQuote", "#8b5cf6");
+    this.renderDefaultWidgetCard(railContent, "calendar", "Calendar Widget", "Calendar", "calendar", "showCalendar", "#8b5cf6");
+    this.renderDefaultWidgetCard(railContent, "graphView", "Graph View Widget", "Graph view", "git-fork", "showGraphView", "#8b5cf6");
+    this.renderDefaultWidgetCard(railContent, "streaks", "Streaks Tracker Widget", "Streaks", "flame", "showStreaks", "#f97316");
+    this.renderDefaultWidgetCard(railContent, "rightQuote", "Inspirational Quote Card", "Quote", "sparkles", "showRightQuote", "#8b5cf6");
 
-    // Drag-and-drop & Layout Section
-    container.createEl("h3", { text: "Widget Drag & Drop Layout" });
-    new Setting(container)
+    // 4. Drag-and-drop & Layout Section
+    const layoutContent = this.createCollapsibleSection(
+      container,
+      "Widget Drag & Drop Layout",
+      "move",
+      "Restore all widgets back to their default columns and positions",
+      false
+    );
+
+    new Setting(layoutContent)
       .setName("Reset Widget Order & Positions")
       .setDesc("Restore all widgets back to their default columns and positions.")
       .addButton(btn => {
@@ -537,7 +570,7 @@ export class OSDashboardSettingTab extends PluginSettingTab {
             this.plugin.settings.widgetLayout = {
               col1: ["todayTasks", "weeklyTasks"],
               col2: ["recentNotes", "quickCapture"],
-              col3: ["ongoingProjects", "bookmarks"],
+              col3: ["ongoingProjects", "deadlines", "bookmarks"],
               rail: ["calendar", "streaks", "graphView", "rightQuote"]
             };
             await this.plugin.saveSettings();
@@ -545,15 +578,16 @@ export class OSDashboardSettingTab extends PluginSettingTab {
           });
       });
 
-    // Custom Widgets Section
-    container.createEl("h3", { text: "Custom Dashboard Widgets" });
-    const customDesc = container.createEl("p", {
-      text: "Add custom cards to your dashboard to embed vault notes, custom checklists, or quick links.",
-      cls: "setting-item-description"
-    });
-    customDesc.style.marginBottom = "14px";
+    // 5. Custom Widgets Section
+    const customContent = this.createCollapsibleSection(
+      container,
+      "Custom Dashboard Widgets",
+      "plus-square",
+      "Add custom cards to your dashboard to embed vault notes, checklists, or links",
+      false
+    );
 
-    const customContainer = container.createDiv({ cls: "os-settings-custom-widgets" });
+    const customContainer = customContent.createDiv({ cls: "os-settings-custom-widgets" });
     this.renderCustomWidgetsList(customContainer);
   }
 
@@ -566,12 +600,12 @@ export class OSDashboardSettingTab extends PluginSettingTab {
     visibilityKey: keyof OSDashboardSettings,
     defaultColor?: string
   ): void {
-    const card = container.createDiv({ cls: "os-settings-widget-card" });
+    const card = container.createDiv({ cls: "os-settings-widget-card is-collapsible" });
     const custom = (this.plugin.settings.widgetCustomizations = this.plugin.settings.widgetCustomizations || {});
     const item = (custom[widgetId] = custom[widgetId] || {});
 
-    // Header row with toggle, name, and reset
-    new Setting(card)
+    // Header row with toggle, name, reset, and expand chevron button
+    const headerRow = new Setting(card)
       .setName(name)
       .addToggle(t => {
         t.setTooltip("Enable/Disable")
@@ -589,10 +623,30 @@ export class OSDashboardSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
             this.display();
           });
+      })
+      .addButton(btn => {
+        btn.setIcon("chevron-down")
+          .setTooltip("Customize appearance (title, icon, color)")
+          .setClass("os-widget-expand-btn")
+          .onClick(() => {
+            card.toggleClass("is-open", !card.hasClass("is-open"));
+            setIcon(btn.buttonEl, card.hasClass("is-open") ? "chevron-up" : "chevron-down");
+          });
       });
 
+    headerRow.nameEl.style.cursor = "pointer";
+    headerRow.nameEl.addEventListener("click", () => {
+      card.toggleClass("is-open", !card.hasClass("is-open"));
+      const expandBtn = card.querySelector(".os-widget-expand-btn") as HTMLElement;
+      if (expandBtn) {
+        setIcon(expandBtn, card.hasClass("is-open") ? "chevron-up" : "chevron-down");
+      }
+    });
+
+    const details = card.createDiv({ cls: "os-settings-widget-details" });
+
     // Title & Icon Row
-    new Setting(card)
+    new Setting(details)
       .setName("Title & Icon")
       .setDesc(`Card title and Lucide icon (defaults: "${defaultTitle}", "${defaultIcon}").`)
       .addText(text => {
@@ -613,7 +667,7 @@ export class OSDashboardSettingTab extends PluginSettingTab {
       });
 
     // Description Row
-    new Setting(card)
+    new Setting(details)
       .setName("Description (Optional)")
       .setDesc("Subtitle shown under the card header.")
       .addText(text => {
@@ -627,7 +681,7 @@ export class OSDashboardSettingTab extends PluginSettingTab {
       });
 
     // Icon Color Row
-    const colorSetting = new Setting(card)
+    const colorSetting = new Setting(details)
       .setName("Icon Color")
       .setDesc("Accent color for this widget's header icon.");
 
@@ -707,10 +761,10 @@ export class OSDashboardSettingTab extends PluginSettingTab {
 
     const widgets = this.plugin.settings.customWidgets || [];
     widgets.forEach((widget, idx) => {
-      const widgetCard = container.createDiv({ cls: "os-settings-widget-card" });
+      const widgetCard = container.createDiv({ cls: "os-settings-widget-card is-collapsible" });
 
-      // Header row with toggle, title and delete
-      new Setting(widgetCard)
+      // Header row with toggle, title, delete and expand chevron
+      const headerRow = new Setting(widgetCard)
         .setName(`Widget #${idx + 1}: ${widget.title || "Untitled"}`)
         .addToggle(t => {
           t.setTooltip("Enable/Disable")
@@ -728,10 +782,30 @@ export class OSDashboardSettingTab extends PluginSettingTab {
               await this.plugin.saveSettings();
               this.renderCustomWidgetsList(container);
             });
+        })
+        .addButton(btn => {
+          btn.setIcon("chevron-down")
+            .setTooltip("Expand / Collapse Settings")
+            .setClass("os-widget-expand-btn")
+            .onClick(() => {
+              widgetCard.toggleClass("is-open", !widgetCard.hasClass("is-open"));
+              setIcon(btn.buttonEl, widgetCard.hasClass("is-open") ? "chevron-up" : "chevron-down");
+            });
         });
 
+      headerRow.nameEl.style.cursor = "pointer";
+      headerRow.nameEl.addEventListener("click", () => {
+        widgetCard.toggleClass("is-open", !widgetCard.hasClass("is-open"));
+        const expandBtn = widgetCard.querySelector(".os-widget-expand-btn") as HTMLElement;
+        if (expandBtn) {
+          setIcon(expandBtn, widgetCard.hasClass("is-open") ? "chevron-up" : "chevron-down");
+        }
+      });
+
+      const details = widgetCard.createDiv({ cls: "os-settings-widget-details" });
+
       // Configuration fields
-      new Setting(widgetCard)
+      new Setting(details)
         .setName("Title & Icon")
         .setDesc("Card header title and Lucide icon name (e.g. book-open, flame, star).")
         .addText(text => {
@@ -752,7 +826,7 @@ export class OSDashboardSettingTab extends PluginSettingTab {
         });
 
       // Widget Description (Optional)
-      new Setting(widgetCard)
+      new Setting(details)
         .setName("Description (Optional)")
         .setDesc("Subtitle or brief description shown under the card header.")
         .addText(text => {
@@ -766,7 +840,7 @@ export class OSDashboardSettingTab extends PluginSettingTab {
         });
 
       // Icon Color Setting
-      const colorSetting = new Setting(widgetCard)
+      const colorSetting = new Setting(details)
         .setName("Icon Color")
         .setDesc("Accent color for this widget's header icon.");
 
@@ -840,7 +914,7 @@ export class OSDashboardSettingTab extends PluginSettingTab {
         });
       }
 
-      new Setting(widgetCard)
+      new Setting(details)
         .setName("Column & Type")
         .setDesc("Target grid column and what content this widget renders.")
         .addDropdown(dd => {
@@ -883,7 +957,7 @@ export class OSDashboardSettingTab extends PluginSettingTab {
         });
 
       if (widget.type === "markdown-note") {
-        const contentSetting = new Setting(widgetCard)
+        const contentSetting = new Setting(details)
           .setName("Vault Note Path")
           .setDesc("Path to a markdown file in your vault (suggests notes as you type).")
           .addText(t => {
@@ -899,7 +973,7 @@ export class OSDashboardSettingTab extends PluginSettingTab {
               });
           });
       } else if (widget.type === "custom-text") {
-        const contentSetting = new Setting(widgetCard)
+        const contentSetting = new Setting(details)
           .setName("Custom Content")
           .setDesc("Custom markdown or text displayed inside the card.")
           .addTextArea(t => {
@@ -911,7 +985,7 @@ export class OSDashboardSettingTab extends PluginSettingTab {
               });
           });
       } else if (widget.type === "dataview") {
-        new Setting(widgetCard)
+        new Setting(details)
           .setName("Show Table Header")
           .setDesc("Display the column header row at the top of the table.")
           .addToggle(t => {
@@ -922,7 +996,7 @@ export class OSDashboardSettingTab extends PluginSettingTab {
               });
           });
 
-        const contentSetting = new Setting(widgetCard)
+        const contentSetting = new Setting(details)
           .setName("Dataview Query")
           .setDesc("Dataview DQL query (e.g. TABLE file.mtime AS Modified FROM #project LIMIT 5) or dataviewjs script.")
           .addTextArea(t => {
@@ -937,7 +1011,7 @@ export class OSDashboardSettingTab extends PluginSettingTab {
             t.inputEl.style.fontSize = "12px";
           });
       } else if (widget.type === "link-button") {
-        const buttonsSection = widgetCard.createDiv({ cls: "os-settings-buttons-section" });
+        const buttonsSection = details.createDiv({ cls: "os-settings-buttons-section" });
         new Setting(buttonsSection)
           .setName("Buttons & Links")
           .setDesc("Add multiple action buttons with custom labels and targets (URLs or [[Note]] links).");
@@ -1063,12 +1137,68 @@ export class OSDashboardSettingTab extends PluginSettingTab {
   }
 
   // =========================================================================
-  // 4. TASKS & PROJECTS TAB
+  // 4. CONFIGURE WIDGETS TAB (COLLAPSIBLE SECTIONS)
   // =========================================================================
-  private renderTasksProjectsTab(container: HTMLElement): void {
-    container.createEl("h3", { text: "Daily & Weekly Task Files" });
+  private createCollapsibleSection(
+    container: HTMLElement,
+    title: string,
+    icon: string,
+    description?: string,
+    defaultOpen = false
+  ): HTMLElement {
+    const isExpanded = this.openSections.has(title) || (defaultOpen && !this.openSections.has(`__closed__${title}`));
+    const wrap = container.createDiv({ cls: `os-settings-collapse ${isExpanded ? "is-expanded" : ""}` });
 
-    new Setting(container)
+    const header = wrap.createDiv({ cls: "os-settings-collapse-header" });
+    const titleLeft = header.createDiv({ cls: "os-settings-collapse-left" });
+    const iconSpan = titleLeft.createSpan({ cls: "os-settings-collapse-icon" });
+    setIcon(iconSpan, icon);
+
+    const titleGroup = titleLeft.createDiv({ cls: "os-settings-collapse-title-group" });
+    titleGroup.createSpan({ cls: "os-settings-collapse-title", text: title });
+
+    if (description) {
+      titleGroup.createSpan({ cls: "os-settings-collapse-desc", text: description });
+    }
+
+    const chevron = header.createSpan({ cls: "os-settings-collapse-chevron" });
+    setIcon(chevron, "chevron-down");
+
+    const content = wrap.createDiv({ cls: "os-settings-collapse-content" });
+
+    header.addEventListener("click", () => {
+      const willExpand = !wrap.hasClass("is-expanded");
+      wrap.toggleClass("is-expanded", willExpand);
+      if (willExpand) {
+        this.openSections.add(title);
+        this.openSections.delete(`__closed__${title}`);
+      } else {
+        this.openSections.delete(title);
+        this.openSections.add(`__closed__${title}`);
+      }
+    });
+
+    return content;
+  }
+
+  private renderTasksProjectsTab(container: HTMLElement): void {
+    const intro = container.createEl("div", { cls: "os-settings-tab-intro" });
+    intro.createEl("h3", { text: "Configure Built-in Widgets" });
+    intro.createEl("p", {
+      text: "Fine-tune file paths, folder targets, frontmatter properties, and limits for each built-in widget.",
+      cls: "setting-item-description"
+    });
+
+    // 1. Daily & Weekly Task Files
+    const tasksContent = this.createCollapsibleSection(
+      container,
+      "Daily & Weekly Task Files",
+      "check-square",
+      "Manage daily planning, logs, and weekly task files",
+      false
+    );
+
+    new Setting(tasksContent)
       .setName("Daily Tasks File (Plan)")
       .setDesc("Path to the file containing daily planned tasks organized by date headings (e.g. Daily Tasks.md).")
       .addText(text => {
@@ -1084,7 +1214,7 @@ export class OSDashboardSettingTab extends PluginSettingTab {
           });
       });
 
-    new Setting(container)
+    new Setting(tasksContent)
       .setName("Daily Logs File (What I Did)")
       .setDesc("Path to the file containing what you actually did today (e.g. Daily Logs.md).")
       .addText(text => {
@@ -1100,7 +1230,7 @@ export class OSDashboardSettingTab extends PluginSettingTab {
           });
       });
 
-    new Setting(container)
+    new Setting(tasksContent)
       .setName("Auto-Log Completed Tasks")
       .setDesc("When you check off a planned task in 'What I had to do', automatically append it to your Daily Logs.")
       .addToggle(toggle => {
@@ -1111,7 +1241,7 @@ export class OSDashboardSettingTab extends PluginSettingTab {
           });
       });
 
-    new Setting(container)
+    new Setting(tasksContent)
       .setName("Weekly Tasks File")
       .setDesc("Path to the file containing weekly tasks (e.g. Weekly Tasks.md).")
       .addText(text => {
@@ -1127,9 +1257,16 @@ export class OSDashboardSettingTab extends PluginSettingTab {
           });
       });
 
-    container.createEl("h3", { text: "Quick Capture" });
+    // 2. Quick Capture
+    const qcContent = this.createCollapsibleSection(
+      container,
+      "Quick Capture",
+      "edit-3",
+      "Destination folder for quick notes created from dashboard",
+      false
+    );
 
-    new Setting(container)
+    new Setting(qcContent)
       .setName("Quick Capture Folder")
       .setDesc("Folder where notes created via the Quick Capture box will be saved (e.g. 00 Inbox).")
       .addText(text => {
@@ -1141,13 +1278,20 @@ export class OSDashboardSettingTab extends PluginSettingTab {
           });
       });
 
-    container.createEl("h3", { text: "Ongoing Projects" });
+    // 3. Ongoing Projects
+    const projectsContent = this.createCollapsibleSection(
+      container,
+      "Ongoing Projects",
+      "target",
+      "Configure folders and frontmatter for active project tracking",
+      false
+    );
 
-    new Setting(container)
-      .setName("Projects Folder")
-      .setDesc("Folder to scan for project notes (leave blank to search entire vault).")
+    new Setting(projectsContent)
+      .setName("Projects Folder(s)")
+      .setDesc("Folders to scan for project notes. Separate multiple folders with commas. If a folder name contains a comma, enclose it in double quotes (e.g. \"03 Projects\", \"Work, Tasks\"). Leave blank to search entire vault.")
       .addText(text => {
-        text.setPlaceholder("03 Projects")
+        text.setPlaceholder("Leave blank to search entire vault")
           .setValue(this.plugin.settings.projectsFolder)
           .onChange(async (val) => {
             this.plugin.settings.projectsFolder = val.trim();
@@ -1155,7 +1299,7 @@ export class OSDashboardSettingTab extends PluginSettingTab {
           });
       });
 
-    new Setting(container)
+    new Setting(projectsContent)
       .setName("Status Property Name")
       .setDesc("Frontmatter property indicating project status.")
       .addText(text => {
@@ -1167,7 +1311,7 @@ export class OSDashboardSettingTab extends PluginSettingTab {
           });
       });
 
-    new Setting(container)
+    new Setting(projectsContent)
       .setName("Active Status Values")
       .setDesc("Comma-separated status values that mark a project as ongoing (e.g. in-progress, active).")
       .addText(text => {
@@ -1179,7 +1323,7 @@ export class OSDashboardSettingTab extends PluginSettingTab {
           });
       });
 
-    new Setting(container)
+    new Setting(projectsContent)
       .setName("Progress Property Name")
       .setDesc("Frontmatter property for manual percentage. If missing, task checkboxes are calculated automatically.")
       .addText(text => {
@@ -1191,9 +1335,85 @@ export class OSDashboardSettingTab extends PluginSettingTab {
           });
       });
 
-    container.createEl("h3", { text: "Recent Notes" });
+    // 4. Deadlines Tracker
+    const deadlinesContent = this.createCollapsibleSection(
+      container,
+      "Deadlines Tracker",
+      "calendar-clock",
+      "Track target dates, remaining time, countdowns, and overdue alerts",
+      false
+    );
 
-    new Setting(container)
+    new Setting(deadlinesContent)
+      .setName("Deadlines Folder(s)")
+      .setDesc("Folders to scan for notes with deadlines. Separate multiple folders with commas or double quotes (e.g. \"03 Projects\", \"04 Work\"). Leave blank to search entire vault.")
+      .addText(text => {
+        text.setPlaceholder("Leave blank to search entire vault")
+          .setValue(this.plugin.settings.deadlinesFolders || "")
+          .onChange(async (val) => {
+            this.plugin.settings.deadlinesFolders = val.trim();
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(deadlinesContent)
+      .setName("Deadline Property Name (Target)")
+      .setDesc("Frontmatter property holding the target date (e.g. target_completion_date, deadline, due). Notes with this property will show in the Deadline widget.")
+      .addText(text => {
+        text.setPlaceholder("target_completion_date")
+          .setValue(this.plugin.settings.deadlineProp || "target_completion_date")
+          .onChange(async (val) => {
+            this.plugin.settings.deadlineProp = val.trim() || "target_completion_date";
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(deadlinesContent)
+      .setName("Completion Property (Finished Trigger)")
+      .setDesc("When this property is filled with a date or value (e.g. 'completed_date: 2026-10-25' or 'completed_date: true'), the milestone is treated as complete and removed from the widget. Empty means still active.")
+      .addText(text => {
+        text.setPlaceholder("completed_date")
+          .setValue(this.plugin.settings.deadlineCompletedProp || "completed_date")
+          .onChange(async (val) => {
+            this.plugin.settings.deadlineCompletedProp = val.trim() || "completed_date";
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(deadlinesContent)
+      .setName("Status Property Name (Badge Display)")
+      .setDesc("Frontmatter property displayed as the badge tag next to the project title (e.g. 'evolve', 'need-review', 'in-progress'). No need to define status values.")
+      .addText(text => {
+        text.setPlaceholder("status")
+          .setValue(this.plugin.settings.deadlineStatusProp || "status")
+          .onChange(async (val) => {
+            this.plugin.settings.deadlineStatusProp = val.trim() || "status";
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(deadlinesContent)
+      .setName("Start Date Property (Optional)")
+      .setDesc("Frontmatter property for project start date (e.g. start_date, created, started). If omitted, note creation date is used to calculate the circular current/deadline progress gauge.")
+      .addText(text => {
+        text.setPlaceholder("start_date")
+          .setValue(this.plugin.settings.deadlineProgressProp || "start_date")
+          .onChange(async (val) => {
+            this.plugin.settings.deadlineProgressProp = val.trim() || "start_date";
+            await this.plugin.saveSettings();
+          });
+      });
+
+    // 5. Recent Notes
+    const recentContent = this.createCollapsibleSection(
+      container,
+      "Recent Notes",
+      "file-text",
+      "Configure limits and excluded directories for recent notes",
+      false
+    );
+
+    new Setting(recentContent)
       .setName("Recent Notes Limit")
       .setDesc("Maximum number of recently modified notes to display.")
       .addText(text => {
@@ -1208,7 +1428,7 @@ export class OSDashboardSettingTab extends PluginSettingTab {
           });
       });
 
-    new Setting(container)
+    new Setting(recentContent)
       .setName("Excluded Folders")
       .setDesc("Comma-separated folders to ignore in Recent Notes (e.g. _attachments, _scripts, _templates, Templates, .trash).")
       .addText(text => {
@@ -1216,6 +1436,343 @@ export class OSDashboardSettingTab extends PluginSettingTab {
           .setValue((this.plugin.settings.recentNotesExcludeFolders || []).join(", "))
           .onChange(async (val) => {
             this.plugin.settings.recentNotesExcludeFolders = val.split(",").map(f => f.trim()).filter(Boolean);
+            await this.plugin.saveSettings();
+          });
+      });
+
+    // 6. Habit Streaks Tracker
+    const habitsContent = this.createCollapsibleSection(
+      container,
+      "Habit Streaks Tracker",
+      "flame",
+      "Configure habits markdown file, archive path, and auto-freeze streak protection",
+      false
+    );
+
+    new Setting(habitsContent)
+      .setName("Habits File")
+      .setDesc("Path to the markdown file storing your active habit streaks and callouts (e.g. Habits.md).")
+      .addText(text => {
+        new FileSuggest(this.app, text.inputEl, async (file) => {
+          this.plugin.settings.habitsFile = file.path;
+          await this.plugin.saveSettings();
+        });
+        text.setPlaceholder("Habits.md")
+          .setValue(this.plugin.settings.habitsFile || "Habits.md")
+          .onChange(async (val) => {
+            this.plugin.settings.habitsFile = val.trim() || "Habits.md";
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(habitsContent)
+      .setName("Habits Archive File")
+      .setDesc("Path to the markdown file where archived habits are moved (e.g. 99 Archive/Habits.md). Created automatically if needed.")
+      .addText(text => {
+        new FileSuggest(this.app, text.inputEl, async (file) => {
+          this.plugin.settings.archiveHabitsFile = file.path;
+          await this.plugin.saveSettings();
+        });
+        text.setPlaceholder("99 Archive/Habits.md")
+          .setValue(this.plugin.settings.archiveHabitsFile || "99 Archive/Habits.md")
+          .onChange(async (val) => {
+            this.plugin.settings.archiveHabitsFile = val.trim() || "99 Archive/Habits.md";
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(habitsContent)
+      .setName("Auto-Freeze Missed Habits")
+      .setDesc("Automatically use an available freeze from the habit's quota if you miss completing it, protecting your streak from resetting.")
+      .addToggle(toggle => {
+        toggle
+          .setValue(this.plugin.settings.autoFreezeHabits ?? true)
+          .onChange(async (val) => {
+            this.plugin.settings.autoFreezeHabits = val;
+            await this.plugin.saveSettings();
+            if (val) {
+              await this.plugin.runAutoFreeze();
+            }
+          });
+      });
+
+    // 7. Calendar & Google Calendar Sync
+    const calendarContent = this.createCollapsibleSection(
+      container,
+      "Calendar & Google Calendar Sync",
+      "calendar",
+      "Configure local events file, Google Calendar iCal sync, and event reminders",
+      false
+    );
+
+    new Setting(calendarContent)
+      .setName("Events File")
+      .setDesc("Path to the Markdown file where local events are stored (e.g. Events.md). Uses the same date-heading format as Daily Tasks (## YYYY-MM-DD).")
+      .addText(text => {
+        new FileSuggest(this.app, text.inputEl, async (file) => {
+          this.plugin.settings.calendarEventsFile = file.path;
+          await this.plugin.saveSettings();
+        });
+        text.setPlaceholder("Events.md")
+          .setValue(this.plugin.settings.calendarEventsFile || "Events.md")
+          .onChange(async (val) => {
+            this.plugin.settings.calendarEventsFile = val.trim() || "Events.md";
+            await this.plugin.saveSettings();
+          });
+      });
+
+    const isKeychainSupported = this.plugin.calendarService.isKeychainAvailable();
+    const SecretComponentClass = (obsidian as any).SecretComponent;
+    const useKeychain = Boolean(
+      this.plugin.settings.googleCalendarUseKeychain ||
+      (isKeychainSupported && Boolean(this.plugin.settings.googleCalendarSecretId))
+    );
+
+    new Setting(calendarContent)
+      .setName("Use Obsidian Keychain (SecretStorage)")
+      .setDesc(
+        isKeychainSupported
+          ? "Store your private Google Calendar iCal address securely in Obsidian Keychain instead of plaintext in settings."
+          : "Obsidian Keychain (SecretStorage) is supported in Obsidian v1.11.4+. You are currently using direct URL storage."
+      )
+      .addToggle(toggle => {
+        toggle.setValue(useKeychain)
+          .setDisabled(!isKeychainSupported)
+          .onChange(async (val) => {
+            this.plugin.settings.googleCalendarUseKeychain = val;
+            await this.plugin.saveSettings();
+            this.display();
+          });
+      });
+
+    if (useKeychain && isKeychainSupported) {
+      if (SecretComponentClass) {
+        new Setting(calendarContent)
+          .setName("Keychain Secret")
+          .setDesc("Select an existing secret or click '+' to create a secret containing your Google Calendar .ics URL.")
+          .addComponent(cb => {
+            const comp = new SecretComponentClass(this.app, cb);
+            comp.setValue(this.plugin.settings.googleCalendarSecretId || "")
+              .onChange(async (val: string) => {
+                this.plugin.settings.googleCalendarSecretId = val;
+                await this.plugin.saveSettings();
+              });
+            return comp;
+          })
+          .addButton(btn => {
+            btn.setButtonText("Sync Events Now")
+              .setCta()
+              .onClick(async () => {
+                const url = this.plugin.calendarService.getCalendarUrl(this.plugin.settings);
+                if (!url) {
+                  new Notice("No secret selected or secret is empty in Obsidian Keychain.");
+                  return;
+                }
+                btn.setButtonText("Syncing...");
+                btn.setDisabled(true);
+                try {
+                  const events = await this.plugin.calendarService.fetchEvents(url);
+                  this.plugin.settings.cachedCalendarEvents = events;
+                  this.plugin.settings.lastCalendarSyncTime = Date.now();
+                  await this.plugin.saveSettings();
+                  new Notice(`✅ Synced ${events.length} Google Calendar event${events.length === 1 ? "" : "s"} from Keychain!`);
+                } catch (err: any) {
+                  new Notice(`❌ Failed to sync: ${err.message || "Invalid iCal URL or network error"}`);
+                } finally {
+                  btn.setButtonText("Sync Events Now");
+                  btn.setDisabled(false);
+                }
+              });
+          });
+      } else {
+        new Setting(calendarContent)
+          .setName("Keychain Secret Identifier")
+          .setDesc("Enter the name of your secret in Obsidian Keychain.")
+          .addText(text => {
+            text.setPlaceholder("e.g. google-calendar-url")
+              .setValue(this.plugin.settings.googleCalendarSecretId || "")
+              .onChange(async (val) => {
+                this.plugin.settings.googleCalendarSecretId = val.trim();
+                await this.plugin.saveSettings();
+              });
+          })
+          .addButton(btn => {
+            btn.setButtonText("Sync Events Now")
+              .setCta()
+              .onClick(async () => {
+                const url = this.plugin.calendarService.getCalendarUrl(this.plugin.settings);
+                if (!url) {
+                  new Notice("No secret configured or secret is empty in Obsidian Keychain.");
+                  return;
+                }
+                btn.setButtonText("Syncing...");
+                btn.setDisabled(true);
+                try {
+                  const events = await this.plugin.calendarService.fetchEvents(url);
+                  this.plugin.settings.cachedCalendarEvents = events;
+                  this.plugin.settings.lastCalendarSyncTime = Date.now();
+                  await this.plugin.saveSettings();
+                  new Notice(`✅ Synced ${events.length} Google Calendar event${events.length === 1 ? "" : "s"} from Keychain!`);
+                } catch (err: any) {
+                  new Notice(`❌ Failed to sync: ${err.message || "Invalid iCal URL or network error"}`);
+                } finally {
+                  btn.setButtonText("Sync Events Now");
+                  btn.setDisabled(false);
+                }
+              });
+          });
+      }
+
+      const secretStorage = (this.app as any).secretStorage;
+      if (secretStorage && typeof secretStorage.setSecret === "function") {
+        let saveUrlInput = "";
+        new Setting(calendarContent)
+          .setName("Save New URL to Keychain")
+          .setDesc("Paste a new Google Calendar .ics URL to store it securely into Keychain as 'google-calendar-url'.")
+          .addText(text => {
+            text.setPlaceholder("https://calendar.google.com/calendar/ical/.../basic.ics")
+              .onChange(val => {
+                saveUrlInput = val.trim();
+              });
+            text.inputEl.style.width = "220px";
+          })
+          .addButton(btn => {
+            btn.setButtonText("Save to Keychain")
+              .onClick(async () => {
+                if (!saveUrlInput || (!saveUrlInput.startsWith("http://") && !saveUrlInput.startsWith("https://"))) {
+                  new Notice("Please enter a valid https:// URL.");
+                  return;
+                }
+                try {
+                  await secretStorage.setSecret("google-calendar-url", saveUrlInput);
+                  this.plugin.settings.googleCalendarSecretId = "google-calendar-url";
+                  this.plugin.settings.googleCalendarUrl = "";
+                  await this.plugin.saveSettings();
+                  new Notice("✅ Saved Google Calendar URL to Obsidian Keychain!");
+                  this.display();
+                } catch (err: any) {
+                  new Notice(`Failed to save to Keychain: ${err?.message || "Unknown error"}`);
+                }
+              });
+          });
+      }
+    } else {
+      new Setting(calendarContent)
+        .setName("Google Calendar Address (Private iCal URL)")
+        .setDesc("In Google Calendar on the Web, go to Settings > Your Calendar > 'Secret address in iCal format' and paste the URL here.")
+        .addText(text => {
+          text.setPlaceholder("https://calendar.google.com/calendar/ical/.../basic.ics")
+            .setValue(this.plugin.settings.googleCalendarUrl || "")
+            .onChange(async (val) => {
+              this.plugin.settings.googleCalendarUrl = val.trim();
+              await this.plugin.saveSettings();
+            });
+          text.inputEl.style.width = "260px";
+        })
+        .addButton(btn => {
+          btn.setButtonText("Sync Events Now")
+            .setCta()
+            .onClick(async () => {
+              const url = this.plugin.calendarService.getCalendarUrl(this.plugin.settings);
+              if (!url) {
+                new Notice("Please enter a Google Calendar iCal address first.");
+                return;
+              }
+              btn.setButtonText("Syncing...");
+              btn.setDisabled(true);
+              try {
+                const events = await this.plugin.calendarService.fetchEvents(url);
+                this.plugin.settings.cachedCalendarEvents = events;
+                this.plugin.settings.lastCalendarSyncTime = Date.now();
+                await this.plugin.saveSettings();
+                new Notice(`✅ Synced ${events.length} Google Calendar event${events.length === 1 ? "" : "s"}!`);
+              } catch (err: any) {
+                new Notice(`❌ Failed to sync: ${err.message || "Invalid iCal URL or network error"}`);
+              } finally {
+                btn.setButtonText("Sync Events Now");
+                btn.setDisabled(false);
+              }
+            });
+        });
+    }
+
+    new Setting(calendarContent)
+      .setName("Show Connect Banner on Calendar Widget")
+      .setDesc("Display the banner prompt to add a Google Calendar address when no address is set.")
+      .addToggle(toggle => {
+        toggle.setValue(this.plugin.settings.showGoogleCalendarBanner ?? true)
+          .onChange(async (val) => {
+            this.plugin.settings.showGoogleCalendarBanner = val;
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(calendarContent)
+      .setName("Auto-sync Events in Background")
+      .setDesc("Automatically refresh events from Google Calendar every few minutes.")
+      .addToggle(toggle => {
+        toggle.setValue(this.plugin.settings.googleCalendarAutoSync ?? true)
+          .onChange(async (val) => {
+            this.plugin.settings.googleCalendarAutoSync = val;
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(calendarContent)
+      .setName("Event Reminders & Notifications")
+      .setDesc("Trigger an in-app notice and desktop notification before an event begins.")
+      .addToggle(toggle => {
+        toggle.setValue(this.plugin.settings.enableCalendarNotifications ?? true)
+          .onChange(async (val) => {
+            this.plugin.settings.enableCalendarNotifications = val;
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(calendarContent)
+      .setName("Notification Lead Time")
+      .setDesc("How many minutes before an event starts to notify you.")
+      .addDropdown(dd => {
+        dd.addOption("5", "5 minutes before")
+          .addOption("10", "10 minutes before (Default)")
+          .addOption("15", "15 minutes before")
+          .addOption("30", "30 minutes before")
+          .setValue(String(this.plugin.settings.calendarNotificationLeadMinutes || 10))
+          .onChange(async (val) => {
+            this.plugin.settings.calendarNotificationLeadMinutes = parseInt(val, 10) || 10;
+            await this.plugin.saveSettings();
+          });
+      });
+
+    // 8. Companion Rail Quote
+    const quoteContent = this.createCollapsibleSection(
+      container,
+      "Companion Rail Quote",
+      "sparkles",
+      "Configure inspirational quote text and author for the right rail widget",
+      false
+    );
+
+    new Setting(quoteContent)
+      .setName("Quote Text")
+      .setDesc("Inspirational quote displayed in the right rail widget.")
+      .addTextArea(text => {
+        text.setPlaceholder("Consistency is more important than intensity.")
+          .setValue(this.plugin.settings.rightRailQuote)
+          .onChange(async (val) => {
+            this.plugin.settings.rightRailQuote = val;
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(quoteContent)
+      .setName("Quote Author (Optional)")
+      .setDesc("Author name or source.")
+      .addText(text => {
+        text.setPlaceholder("e.g. Bruce Lee")
+          .setValue(this.plugin.settings.rightRailQuoteAuthor || "")
+          .onChange(async (val) => {
+            this.plugin.settings.rightRailQuoteAuthor = val;
             await this.plugin.saveSettings();
           });
       });
@@ -1422,335 +1979,5 @@ export class OSDashboardSettingTab extends PluginSettingTab {
       this.renderLinksSettings(container);
     });
   }
-
-  // =========================================================================
-  // 5. STREAKS & RIGHT RAIL TAB
-  // =========================================================================
-  private renderStreaksRailTab(container: HTMLElement): void {
-    // 1. Habit Streaks Configuration
-    container.createEl("h3", { text: "Habit Streaks Configuration" });
-
-    new Setting(container)
-      .setName("Habits File")
-      .setDesc("Path to the markdown file storing your active habit streaks and callouts (e.g. Habits.md).")
-      .addText(text => {
-        new FileSuggest(this.app, text.inputEl, async (file) => {
-          this.plugin.settings.habitsFile = file.path;
-          await this.plugin.saveSettings();
-        });
-        text.setPlaceholder("Habits.md")
-          .setValue(this.plugin.settings.habitsFile || "Habits.md")
-          .onChange(async (val) => {
-            this.plugin.settings.habitsFile = val.trim() || "Habits.md";
-            await this.plugin.saveSettings();
-          });
-      });
-
-    new Setting(container)
-      .setName("Habits Archive File")
-      .setDesc("Path to the markdown file where archived habits are moved (e.g. 99 Archive/Habits.md). Created automatically if needed.")
-      .addText(text => {
-        new FileSuggest(this.app, text.inputEl, async (file) => {
-          this.plugin.settings.archiveHabitsFile = file.path;
-          await this.plugin.saveSettings();
-        });
-        text.setPlaceholder("99 Archive/Habits.md")
-          .setValue(this.plugin.settings.archiveHabitsFile || "99 Archive/Habits.md")
-          .onChange(async (val) => {
-            this.plugin.settings.archiveHabitsFile = val.trim() || "99 Archive/Habits.md";
-            await this.plugin.saveSettings();
-          });
-      });
-
-    new Setting(container)
-      .setName("Auto-Freeze Missed Habits")
-      .setDesc("Automatically use an available freeze from the habit's quota if you miss completing it, protecting your streak from resetting.")
-      .addToggle(toggle => {
-        toggle
-          .setValue(this.plugin.settings.autoFreezeHabits ?? true)
-          .onChange(async (val) => {
-            this.plugin.settings.autoFreezeHabits = val;
-            await this.plugin.saveSettings();
-            if (val) {
-              await this.plugin.runAutoFreeze();
-            }
-          });
-      });
-
-    // 2. Calendar Events File (.md) Section
-    container.createEl("h3", { text: "Calendar Events File (.md)" });
-    new Setting(container)
-      .setName("Events File")
-      .setDesc("Path to the Markdown file where local events are stored (e.g. Events.md). Uses the same date-heading format as Daily Tasks (## YYYY-MM-DD).")
-      .addText(text => {
-        new FileSuggest(this.app, text.inputEl, async (file) => {
-          this.plugin.settings.calendarEventsFile = file.path;
-          await this.plugin.saveSettings();
-        });
-        text.setPlaceholder("Events.md")
-          .setValue(this.plugin.settings.calendarEventsFile || "Events.md")
-          .onChange(async (val) => {
-            this.plugin.settings.calendarEventsFile = val.trim() || "Events.md";
-            await this.plugin.saveSettings();
-          });
-      });
-
-    // 3. Google Calendar Integration Section
-    container.createEl("h3", { text: "Google Calendar Integration" });
-    const calDesc = container.createEl("p", {
-      cls: "setting-item-description",
-      text: "Display real-time events on your Calendar widget with colored event chips and event notifications."
-    });
-    calDesc.style.marginBottom = "14px";
-
-    const isKeychainSupported = this.plugin.calendarService.isKeychainAvailable();
-    const SecretComponentClass = (obsidian as any).SecretComponent;
-    const useKeychain = Boolean(
-      this.plugin.settings.googleCalendarUseKeychain ||
-      (isKeychainSupported && Boolean(this.plugin.settings.googleCalendarSecretId))
-    );
-
-    new Setting(container)
-      .setName("Use Obsidian Keychain (SecretStorage)")
-      .setDesc(
-        isKeychainSupported
-          ? "Store your private Google Calendar iCal address securely in Obsidian Keychain instead of plaintext in settings."
-          : "Obsidian Keychain (SecretStorage) is supported in Obsidian v1.11.4+. You are currently using direct URL storage."
-      )
-      .addToggle(toggle => {
-        toggle.setValue(useKeychain)
-          .setDisabled(!isKeychainSupported)
-          .onChange(async (val) => {
-            this.plugin.settings.googleCalendarUseKeychain = val;
-            await this.plugin.saveSettings();
-            this.display();
-          });
-      });
-
-    if (useKeychain && isKeychainSupported) {
-      if (SecretComponentClass) {
-        new Setting(container)
-          .setName("Keychain Secret")
-          .setDesc("Select an existing secret or click '+' to create a secret containing your Google Calendar .ics URL.")
-          .addComponent(cb => {
-            const comp = new SecretComponentClass(this.app, cb);
-            comp.setValue(this.plugin.settings.googleCalendarSecretId || "")
-              .onChange(async (val: string) => {
-                this.plugin.settings.googleCalendarSecretId = val;
-                await this.plugin.saveSettings();
-              });
-            return comp;
-          })
-          .addButton(btn => {
-            btn.setButtonText("Sync Events Now")
-              .setCta()
-              .onClick(async () => {
-                const url = this.plugin.calendarService.getCalendarUrl(this.plugin.settings);
-                if (!url) {
-                  new Notice("No secret selected or secret is empty in Obsidian Keychain.");
-                  return;
-                }
-                btn.setButtonText("Syncing...");
-                btn.setDisabled(true);
-                try {
-                  const events = await this.plugin.calendarService.fetchEvents(url);
-                  this.plugin.settings.cachedCalendarEvents = events;
-                  this.plugin.settings.lastCalendarSyncTime = Date.now();
-                  await this.plugin.saveSettings();
-                  new Notice(`✅ Synced ${events.length} Google Calendar event${events.length === 1 ? "" : "s"} from Keychain!`);
-                } catch (err: any) {
-                  new Notice(`❌ Failed to sync: ${err.message || "Invalid iCal URL or network error"}`);
-                } finally {
-                  btn.setButtonText("Sync Events Now");
-                  btn.setDisabled(false);
-                }
-              });
-          });
-      } else {
-        new Setting(container)
-          .setName("Keychain Secret Identifier")
-          .setDesc("Enter the name of your secret in Obsidian Keychain.")
-          .addText(text => {
-            text.setPlaceholder("e.g. google-calendar-url")
-              .setValue(this.plugin.settings.googleCalendarSecretId || "")
-              .onChange(async (val) => {
-                this.plugin.settings.googleCalendarSecretId = val.trim();
-                await this.plugin.saveSettings();
-              });
-          })
-          .addButton(btn => {
-            btn.setButtonText("Sync Events Now")
-              .setCta()
-              .onClick(async () => {
-                const url = this.plugin.calendarService.getCalendarUrl(this.plugin.settings);
-                if (!url) {
-                  new Notice("No secret configured or secret is empty in Obsidian Keychain.");
-                  return;
-                }
-                btn.setButtonText("Syncing...");
-                btn.setDisabled(true);
-                try {
-                  const events = await this.plugin.calendarService.fetchEvents(url);
-                  this.plugin.settings.cachedCalendarEvents = events;
-                  this.plugin.settings.lastCalendarSyncTime = Date.now();
-                  await this.plugin.saveSettings();
-                  new Notice(`✅ Synced ${events.length} Google Calendar event${events.length === 1 ? "" : "s"} from Keychain!`);
-                } catch (err: any) {
-                  new Notice(`❌ Failed to sync: ${err.message || "Invalid iCal URL or network error"}`);
-                } finally {
-                  btn.setButtonText("Sync Events Now");
-                  btn.setDisabled(false);
-                }
-              });
-          });
-      }
-
-      const secretStorage = (this.app as any).secretStorage;
-      if (secretStorage && typeof secretStorage.setSecret === "function") {
-        let saveUrlInput = "";
-        new Setting(container)
-          .setName("Save New URL to Keychain")
-          .setDesc("Paste a new Google Calendar .ics URL to store it securely into Keychain as 'google-calendar-url'.")
-          .addText(text => {
-            text.setPlaceholder("https://calendar.google.com/calendar/ical/.../basic.ics")
-              .onChange(val => {
-                saveUrlInput = val.trim();
-              });
-            text.inputEl.style.width = "220px";
-          })
-          .addButton(btn => {
-            btn.setButtonText("Save to Keychain")
-              .onClick(async () => {
-                if (!saveUrlInput || (!saveUrlInput.startsWith("http://") && !saveUrlInput.startsWith("https://"))) {
-                  new Notice("Please enter a valid https:// URL.");
-                  return;
-                }
-                try {
-                  await secretStorage.setSecret("google-calendar-url", saveUrlInput);
-                  this.plugin.settings.googleCalendarSecretId = "google-calendar-url";
-                  this.plugin.settings.googleCalendarUrl = "";
-                  await this.plugin.saveSettings();
-                  new Notice("✅ Saved Google Calendar URL to Obsidian Keychain!");
-                  this.display();
-                } catch (err: any) {
-                  new Notice(`Failed to save to Keychain: ${err?.message || "Unknown error"}`);
-                }
-              });
-          });
-      }
-    } else {
-      new Setting(container)
-        .setName("Google Calendar Address (Private iCal URL)")
-        .setDesc("In Google Calendar on the Web, go to Settings > Your Calendar > 'Secret address in iCal format' and paste the URL here.")
-        .addText(text => {
-          text.setPlaceholder("https://calendar.google.com/calendar/ical/.../basic.ics")
-            .setValue(this.plugin.settings.googleCalendarUrl || "")
-            .onChange(async (val) => {
-              this.plugin.settings.googleCalendarUrl = val.trim();
-              await this.plugin.saveSettings();
-            });
-          text.inputEl.style.width = "260px";
-        })
-        .addButton(btn => {
-          btn.setButtonText("Sync Events Now")
-            .setCta()
-            .onClick(async () => {
-              const url = this.plugin.calendarService.getCalendarUrl(this.plugin.settings);
-              if (!url) {
-                new Notice("Please enter a Google Calendar iCal address first.");
-                return;
-              }
-              btn.setButtonText("Syncing...");
-              btn.setDisabled(true);
-              try {
-                const events = await this.plugin.calendarService.fetchEvents(url);
-                this.plugin.settings.cachedCalendarEvents = events;
-                this.plugin.settings.lastCalendarSyncTime = Date.now();
-                await this.plugin.saveSettings();
-                new Notice(`✅ Synced ${events.length} Google Calendar event${events.length === 1 ? "" : "s"}!`);
-              } catch (err: any) {
-                new Notice(`❌ Failed to sync: ${err.message || "Invalid iCal URL or network error"}`);
-              } finally {
-                btn.setButtonText("Sync Events Now");
-                btn.setDisabled(false);
-              }
-            });
-        });
-    }
-
-    new Setting(container)
-      .setName("Show Connect Banner on Calendar Widget")
-      .setDesc("Display the banner prompt to add a Google Calendar address when no address is set.")
-      .addToggle(toggle => {
-        toggle.setValue(this.plugin.settings.showGoogleCalendarBanner ?? true)
-          .onChange(async (val) => {
-            this.plugin.settings.showGoogleCalendarBanner = val;
-            await this.plugin.saveSettings();
-          });
-      });
-
-    new Setting(container)
-      .setName("Auto-sync Events in Background")
-      .setDesc("Automatically refresh events from Google Calendar every few minutes.")
-      .addToggle(toggle => {
-        toggle.setValue(this.plugin.settings.googleCalendarAutoSync ?? true)
-          .onChange(async (val) => {
-            this.plugin.settings.googleCalendarAutoSync = val;
-            await this.plugin.saveSettings();
-          });
-      });
-
-    new Setting(container)
-      .setName("Event Reminders & Notifications")
-      .setDesc("Trigger an in-app notice and desktop notification before an event begins.")
-      .addToggle(toggle => {
-        toggle.setValue(this.plugin.settings.enableCalendarNotifications ?? true)
-          .onChange(async (val) => {
-            this.plugin.settings.enableCalendarNotifications = val;
-            await this.plugin.saveSettings();
-          });
-      });
-
-    new Setting(container)
-      .setName("Notification Lead Time")
-      .setDesc("How many minutes before an event starts to notify you.")
-      .addDropdown(dd => {
-        dd.addOption("5", "5 minutes before")
-          .addOption("10", "10 minutes before (Default)")
-          .addOption("15", "15 minutes before")
-          .addOption("30", "30 minutes before")
-          .setValue(String(this.plugin.settings.calendarNotificationLeadMinutes || 10))
-          .onChange(async (val) => {
-            this.plugin.settings.calendarNotificationLeadMinutes = parseInt(val, 10) || 10;
-            await this.plugin.saveSettings();
-          });
-      });
-
-    // 4. Right Rail Quote Content
-    container.createEl("h3", { text: "Right Rail Quote Content" });
-
-    new Setting(container)
-      .setName("Quote Text")
-      .setDesc("Inspirational quote displayed in the right rail widget.")
-      .addTextArea(text => {
-        text.setPlaceholder("Consistency is more important than intensity.")
-          .setValue(this.plugin.settings.rightRailQuote)
-          .onChange(async (val) => {
-            this.plugin.settings.rightRailQuote = val;
-            await this.plugin.saveSettings();
-          });
-      });
-
-    new Setting(container)
-      .setName("Quote Author (Optional)")
-      .setDesc("Author name or source.")
-      .addText(text => {
-        text.setPlaceholder("e.g. Bruce Lee")
-          .setValue(this.plugin.settings.rightRailQuoteAuthor || "")
-          .onChange(async (val) => {
-            this.plugin.settings.rightRailQuoteAuthor = val;
-            await this.plugin.saveSettings();
-          });
-      });
-  }
 }
+

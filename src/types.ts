@@ -83,7 +83,17 @@ export interface OSDashboardSettings {
   showRecentNotes: boolean;
   showQuickCapture: boolean;
   showOngoingProjects: boolean;
+  showDeadlines: boolean;
   showBookmarks: boolean;
+
+  // Deadlines Widget Settings
+  deadlinesFolders: string;
+  deadlineProp: string;
+  deadlineCompletedProp?: string;
+  deadlineStatusProp: string;
+  deadlineCompletedValues?: string[];
+  deadlineStatusValues?: string[];
+  deadlineProgressProp: string;
 
   // Right Rail Widgets
   showRightRail: boolean;
@@ -186,8 +196,24 @@ export interface StreakItem {
   journal?: string;
 }
 
+export const AESTHETIC_UNSPLASH_BANNERS = [
+  "https://images.unsplash.com/photo-1519681393784-d120267933ba?auto=format&fit=crop&w=1920&q=80", // Starry Night Mountains
+  "https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=1920&q=80", // Yosemite Valley Forest
+  "https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=1920&q=80", // Deep Space Cosmic Galaxy
+  "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1920&q=80", // Sunset Coast & Ocean
+  "https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?auto=format&fit=crop&w=1920&q=80", // Foggy Morning Mountain Ridge
+  "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?auto=format&fit=crop&w=1920&q=80", // Canadian Rocky Mountain Peaks
+  "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=1920&q=80", // Cyberpunk Neon Cityscape
+  "https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1920&q=80"  // Aurora Borealis Northern Lights
+];
+
+export function getRandomAestheticBanner(): string {
+  const idx = Math.floor(Math.random() * AESTHETIC_UNSPLASH_BANNERS.length);
+  return AESTHETIC_UNSPLASH_BANNERS[idx];
+}
+
 export const DEFAULT_SETTINGS: OSDashboardSettings = {
-  bannerPath: "",
+  bannerPath: "https://images.unsplash.com/photo-1519681393784-d120267933ba?auto=format&fit=crop&w=1920&q=80",
   vaultAvatarIcon: "home",
   vaultTitle: "",
   vaultSubtitle: "Think • Learn • Build • Create • Grow",
@@ -206,7 +232,7 @@ export const DEFAULT_SETTINGS: OSDashboardSettings = {
   maxFreezesPerMonth: 4,
   autoFreezeHabits: true,
   quickCaptureFolder: "00 Inbox",
-  projectsFolder: "03 Projects",
+  projectsFolder: "",
   projectStatusProp: "status",
   projectStatusValues: ["in-progress", "active", "ongoing"],
   projectProgressProp: "progress",
@@ -234,7 +260,17 @@ export const DEFAULT_SETTINGS: OSDashboardSettings = {
   showRecentNotes: true,
   showQuickCapture: true,
   showOngoingProjects: true,
+  showDeadlines: true,
   showBookmarks: true,
+
+  // Deadlines defaults
+  deadlinesFolders: "",
+  deadlineProp: "target_completion_date",
+  deadlineCompletedProp: "completed_date",
+  deadlineStatusProp: "status",
+  deadlineCompletedValues: ["completed", "done", "finished", "archived", "closed"],
+  deadlineStatusValues: ["in-progress", "active", "ongoing"],
+  deadlineProgressProp: "start_date",
 
   // Right Rail Widgets
   showRightRail: true,
@@ -264,7 +300,7 @@ export const DEFAULT_SETTINGS: OSDashboardSettings = {
   widgetLayout: {
     col1: ["todayTasks", "weeklyTasks"],
     col2: ["recentNotes", "quickCapture"],
-    col3: ["ongoingProjects", "bookmarks"],
+    col3: ["ongoingProjects", "deadlines", "bookmarks"],
     rail: ["calendar", "streaks", "graphView", "rightQuote"]
   }
 };
@@ -272,7 +308,7 @@ export const DEFAULT_SETTINGS: OSDashboardSettings = {
 export const DEFAULT_WIDGET_LAYOUT: DashboardWidgetLayout = {
   col1: ["todayTasks", "weeklyTasks"],
   col2: ["recentNotes", "quickCapture"],
-  col3: ["ongoingProjects", "bookmarks"],
+  col3: ["ongoingProjects", "deadlines", "bookmarks"],
   rail: ["calendar", "streaks", "graphView", "rightQuote"]
 };
 
@@ -292,6 +328,60 @@ export interface ProjectItem {
   progress: number;
   resolvedIcon: ResolvedFolderIcon;
   colorHex?: string;
+}
+
+export interface DeadlineItem {
+  title: string;
+  file: TFile;
+  deadlineDate: string;
+  daysLeft: number;
+  isOverdue: boolean;
+  isToday: boolean;
+  formattedTimeLeft: string;
+  fullTimeDescription?: string;
+  status: string;
+  timeProgress: number;
+  progress?: number;
+  resolvedIcon: ResolvedFolderIcon;
+  colorHex?: string;
+}
+
+/**
+ * Parses a comma-separated list of folders that may contain double-quoted folder names.
+ * Example: '"03 Projects", "Work, Tasks", Personal' -> ['03 Projects', 'Work, Tasks', 'Personal']
+ */
+export function parseFolderList(input: string): string[] {
+  if (!input || !input.trim()) return [];
+  const results: string[] = [];
+  const regex = /"([^"]+)"|'([^']+)'|([^,]+)/g;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(input)) !== null) {
+    const val = (match[1] ?? match[2] ?? match[3] ?? "").trim();
+    const clean = val.replace(/^["']|["']$/g, "").trim();
+    if (clean) {
+      results.push(clean);
+    }
+  }
+  return results;
+}
+
+/**
+ * Checks if a file path belongs to any of the specified folders in folderList.
+ * If folderList is empty, returns true (matches whole vault).
+ */
+export function isPathInFolderList(filePath: string, folderList: string[]): boolean {
+  if (!folderList || folderList.length === 0) return true;
+  const lowerPath = filePath.toLowerCase().replace(/\\/g, "/");
+  return folderList.some(f => {
+    const cleanF = f.toLowerCase().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "").trim();
+    if (!cleanF) return true;
+    return (
+      lowerPath.startsWith(cleanF + "/") ||
+      lowerPath === cleanF ||
+      lowerPath.includes("/" + cleanF + "/") ||
+      lowerPath.endsWith("/" + cleanF)
+    );
+  });
 }
 
 export function hexToRgb(hex: string): string {

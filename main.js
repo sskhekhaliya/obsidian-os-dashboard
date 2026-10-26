@@ -40,8 +40,30 @@ var moment = (...args) => {
   return window.moment(...args);
 };
 moment.utc = (...args) => window.moment?.utc(...args);
+var AESTHETIC_UNSPLASH_BANNERS = [
+  "https://images.unsplash.com/photo-1519681393784-d120267933ba?auto=format&fit=crop&w=1920&q=80",
+  // Starry Night Mountains
+  "https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=1920&q=80",
+  // Yosemite Valley Forest
+  "https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=1920&q=80",
+  // Deep Space Cosmic Galaxy
+  "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1920&q=80",
+  // Sunset Coast & Ocean
+  "https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?auto=format&fit=crop&w=1920&q=80",
+  // Foggy Morning Mountain Ridge
+  "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?auto=format&fit=crop&w=1920&q=80",
+  // Canadian Rocky Mountain Peaks
+  "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=1920&q=80",
+  // Cyberpunk Neon Cityscape
+  "https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1920&q=80"
+  // Aurora Borealis Northern Lights
+];
+function getRandomAestheticBanner() {
+  const idx = Math.floor(Math.random() * AESTHETIC_UNSPLASH_BANNERS.length);
+  return AESTHETIC_UNSPLASH_BANNERS[idx];
+}
 var DEFAULT_SETTINGS = {
-  bannerPath: "",
+  bannerPath: "https://images.unsplash.com/photo-1519681393784-d120267933ba?auto=format&fit=crop&w=1920&q=80",
   vaultAvatarIcon: "home",
   vaultTitle: "",
   vaultSubtitle: "Think \u2022 Learn \u2022 Build \u2022 Create \u2022 Grow",
@@ -60,7 +82,7 @@ var DEFAULT_SETTINGS = {
   maxFreezesPerMonth: 4,
   autoFreezeHabits: true,
   quickCaptureFolder: "00 Inbox",
-  projectsFolder: "03 Projects",
+  projectsFolder: "",
   projectStatusProp: "status",
   projectStatusValues: ["in-progress", "active", "ongoing"],
   projectProgressProp: "progress",
@@ -88,7 +110,16 @@ var DEFAULT_SETTINGS = {
   showRecentNotes: true,
   showQuickCapture: true,
   showOngoingProjects: true,
+  showDeadlines: true,
   showBookmarks: true,
+  // Deadlines defaults
+  deadlinesFolders: "",
+  deadlineProp: "target_completion_date",
+  deadlineCompletedProp: "completed_date",
+  deadlineStatusProp: "status",
+  deadlineCompletedValues: ["completed", "done", "finished", "archived", "closed"],
+  deadlineStatusValues: ["in-progress", "active", "ongoing"],
+  deadlineProgressProp: "start_date",
   // Right Rail Widgets
   showRightRail: true,
   showCalendar: true,
@@ -115,10 +146,33 @@ var DEFAULT_SETTINGS = {
   widgetLayout: {
     col1: ["todayTasks", "weeklyTasks"],
     col2: ["recentNotes", "quickCapture"],
-    col3: ["ongoingProjects", "bookmarks"],
+    col3: ["ongoingProjects", "deadlines", "bookmarks"],
     rail: ["calendar", "streaks", "graphView", "rightQuote"]
   }
 };
+function parseFolderList(input) {
+  if (!input || !input.trim()) return [];
+  const results = [];
+  const regex = /"([^"]+)"|'([^']+)'|([^,]+)/g;
+  let match;
+  while ((match = regex.exec(input)) !== null) {
+    const val = (match[1] ?? match[2] ?? match[3] ?? "").trim();
+    const clean = val.replace(/^["']|["']$/g, "").trim();
+    if (clean) {
+      results.push(clean);
+    }
+  }
+  return results;
+}
+function isPathInFolderList(filePath, folderList) {
+  if (!folderList || folderList.length === 0) return true;
+  const lowerPath = filePath.toLowerCase().replace(/\\/g, "/");
+  return folderList.some((f) => {
+    const cleanF = f.toLowerCase().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "").trim();
+    if (!cleanF) return true;
+    return lowerPath.startsWith(cleanF + "/") || lowerPath === cleanF || lowerPath.includes("/" + cleanF + "/") || lowerPath.endsWith("/" + cleanF);
+  });
+}
 function hexToRgb(hex) {
   const clean = (hex || "").replace("#", "").trim();
   if (clean.length === 3) {
@@ -715,6 +769,7 @@ var OSDashboardSettingTab = class extends import_obsidian4.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.activeTab = "general";
+    this.openSections = /* @__PURE__ */ new Set();
     this.plugin = plugin;
   }
   display() {
@@ -726,8 +781,7 @@ var OSDashboardSettingTab = class extends import_obsidian4.PluginSettingTab {
       { id: "general", label: "General", icon: "settings" },
       { id: "navigation", label: "Navigation", icon: "folder-tree" },
       { id: "widgets", label: "Widgets", icon: "layout-grid" },
-      { id: "tasks-projects", label: "Tasks & Projects", icon: "check-square" },
-      { id: "streaks", label: "Streaks & Rail", icon: "flame" },
+      { id: "tasks-projects", label: "Configure Widgets", icon: "sliders" },
       { id: "bookmarks", label: "Bookmarks", icon: "bookmark" }
     ];
     for (const tab of tabs) {
@@ -755,9 +809,6 @@ var OSDashboardSettingTab = class extends import_obsidian4.PluginSettingTab {
         break;
       case "tasks-projects":
         this.renderTasksProjectsTab(tabContent);
-        break;
-      case "streaks":
-        this.renderStreaksRailTab(tabContent);
         break;
       case "bookmarks":
         this.renderBookmarksTab(tabContent);
@@ -800,10 +851,19 @@ var OSDashboardSettingTab = class extends import_obsidian4.PluginSettingTab {
         await this.plugin.saveSettings();
       });
     });
-    new import_obsidian4.Setting(container).setName("Banner Image Path or URL").setDesc("Path to an image in your vault (e.g. 'Attachments/banner.png') or an online image URL.").addText((text) => {
-      text.setPlaceholder("path/to/banner.jpg or https://...").setValue(this.plugin.settings.bannerPath).onChange(async (val) => {
+    new import_obsidian4.Setting(container).setName("Banner Image Path or URL").setDesc("Path to an image in your vault or an online image URL. Defaults to an aesthetic Unsplash panorama.").addText((text) => {
+      text.setPlaceholder("https://images.unsplash.com/... or banner.png").setValue(this.plugin.settings.bannerPath).onChange(async (val) => {
         this.plugin.settings.bannerPath = val.trim();
         await this.plugin.saveSettings();
+      });
+      text.inputEl.style.width = "240px";
+    }).addButton((btn) => {
+      btn.setButtonText("\u{1F3B2} Random Unsplash").setTooltip("Load a new random aesthetic Unsplash photo").onClick(async () => {
+        const newBanner = getRandomAestheticBanner();
+        this.plugin.settings.bannerPath = newBanner;
+        await this.plugin.saveSettings();
+        new import_obsidian4.Notice("Aesthetic Unsplash banner applied!");
+        this.display();
       });
     });
     new import_obsidian4.Setting(container).setName("Avatar Icon").setDesc("Lucide icon identifier for the hero avatar badge (e.g. 'home', 'terminal', 'user').").addText((text) => {
@@ -1019,80 +1079,100 @@ var OSDashboardSettingTab = class extends import_obsidian4.PluginSettingTab {
   // =========================================================================
   // 3. WIDGETS MANAGER TAB
   // =========================================================================
+  // =========================================================================
+  // 3. WIDGETS TAB (COLLAPSIBLE SECTIONS)
+  // =========================================================================
   renderWidgetsTab(container) {
-    container.createEl("h3", { text: "Header & Navigation Visibility" });
-    const descTop = container.createEl("p", {
-      text: "Toggle top-level hero banner and folder navigation bar on your dashboard.",
+    const intro = container.createEl("div", { cls: "os-settings-tab-intro" });
+    intro.createEl("h3", { text: "Dashboard Widgets & Layout" });
+    intro.createEl("p", {
+      text: "Customize widget visibility, appearance, accent colors, and column arrangement.",
       cls: "setting-item-description"
     });
-    descTop.style.marginBottom = "14px";
-    new import_obsidian4.Setting(container).setName("Hero Banner").setDesc("Top banner with vault identity, quotes, and live clock.").addToggle((toggle) => {
+    const headerContent = this.createCollapsibleSection(
+      container,
+      "Header & Navigation Visibility",
+      "layout-template",
+      "Toggle top-level hero banner and folder navigation bar",
+      false
+    );
+    new import_obsidian4.Setting(headerContent).setName("Hero Banner").setDesc("Top banner with vault identity, quotes, and live clock.").addToggle((toggle) => {
       toggle.setValue(this.plugin.settings.showHeroBanner ?? true).onChange(async (val) => {
         this.plugin.settings.showHeroBanner = val;
         await this.plugin.saveSettings();
       });
     });
-    new import_obsidian4.Setting(container).setName("Smart Navigation Ribbon").setDesc("1st-level folder shortcuts with inherited icons and colors.").addToggle((toggle) => {
+    new import_obsidian4.Setting(headerContent).setName("Smart Navigation Ribbon").setDesc("1st-level folder shortcuts with inherited icons and colors.").addToggle((toggle) => {
       toggle.setValue(this.plugin.settings.showNavRibbon ?? true).onChange(async (val) => {
         this.plugin.settings.showNavRibbon = val;
         await this.plugin.saveSettings();
       });
     });
-    container.createEl("h3", { text: "Main Grid Default Widgets" });
-    const descMain = container.createEl("p", {
-      text: "Customize title, Lucide icon, accent color, and optional subtitle description for each built-in main card.",
-      cls: "setting-item-description"
-    });
-    descMain.style.marginBottom = "14px";
-    this.renderDefaultWidgetCard(container, "todayTasks", "Daily Tasks (Plan & Log)", "Daily", "check-circle", "showTodayTasks", "#8b5cf6");
-    this.renderDefaultWidgetCard(container, "weeklyTasks", "Weekly Planning", "This Week", "calendar", "showWeeklyTasks", "#8b5cf6");
-    this.renderDefaultWidgetCard(container, "recentNotes", "Recent Notes", "Recent Notes", "file-text", "showRecentNotes", "#8b5cf6");
-    this.renderDefaultWidgetCard(container, "quickCapture", "Quick Capture", "Quick Capture", "edit-3", "showQuickCapture", "#8b5cf6");
-    this.renderDefaultWidgetCard(container, "ongoingProjects", "Ongoing Projects", "Ongoing Projects", "target", "showOngoingProjects", "#8b5cf6");
-    this.renderDefaultWidgetCard(container, "bookmarks", "Bookmarks & Links", "Links", "link-2", "showBookmarks", "#8b5cf6");
-    container.createEl("h3", { text: "Right Side Companion Rail Widgets" });
-    const descRail = container.createEl("p", {
-      text: "Companion rail on the right side containing Calendar, Graph view, Streaks tracker, and Quote card.",
-      cls: "setting-item-description"
-    });
-    descRail.style.marginBottom = "14px";
-    new import_obsidian4.Setting(container).setName("Enable Right Side Rail").setDesc("Master toggle to show or hide the entire right companion rail.").addToggle((toggle) => {
+    const mainGridContent = this.createCollapsibleSection(
+      container,
+      "Main Grid Default Widgets",
+      "layout-grid",
+      "Toggle cards and click to customize title, icon, or accent color",
+      true
+    );
+    this.renderDefaultWidgetCard(mainGridContent, "todayTasks", "Daily Tasks (Plan & Log)", "Daily", "check-circle", "showTodayTasks", "#8b5cf6");
+    this.renderDefaultWidgetCard(mainGridContent, "weeklyTasks", "Weekly Planning", "This Week", "calendar", "showWeeklyTasks", "#8b5cf6");
+    this.renderDefaultWidgetCard(mainGridContent, "recentNotes", "Recent Notes", "Recent Notes", "file-text", "showRecentNotes", "#8b5cf6");
+    this.renderDefaultWidgetCard(mainGridContent, "quickCapture", "Quick Capture", "Quick Capture", "edit-3", "showQuickCapture", "#8b5cf6");
+    this.renderDefaultWidgetCard(mainGridContent, "ongoingProjects", "Ongoing Projects", "Ongoing Projects", "target", "showOngoingProjects", "#8b5cf6");
+    this.renderDefaultWidgetCard(mainGridContent, "deadlines", "Deadlines Tracker", "Deadlines", "calendar-clock", "showDeadlines", "#ef4444");
+    this.renderDefaultWidgetCard(mainGridContent, "bookmarks", "Bookmarks & Links", "Links", "link-2", "showBookmarks", "#8b5cf6");
+    const railContent = this.createCollapsibleSection(
+      container,
+      "Right Side Companion Rail Widgets",
+      "sidebar",
+      "Companion rail containing Calendar, Graph view, Streaks tracker, and Quote card",
+      false
+    );
+    new import_obsidian4.Setting(railContent).setName("Enable Right Side Rail").setDesc("Master toggle to show or hide the entire right companion rail.").addToggle((toggle) => {
       toggle.setValue(this.plugin.settings.showRightRail ?? true).onChange(async (val) => {
         this.plugin.settings.showRightRail = val;
         await this.plugin.saveSettings();
       });
     });
-    this.renderDefaultWidgetCard(container, "calendar", "Calendar Widget", "Calendar", "calendar", "showCalendar", "#8b5cf6");
-    this.renderDefaultWidgetCard(container, "graphView", "Graph View Widget", "Graph view", "git-fork", "showGraphView", "#8b5cf6");
-    this.renderDefaultWidgetCard(container, "streaks", "Streaks Tracker Widget", "Streaks", "flame", "showStreaks", "#f97316");
-    this.renderDefaultWidgetCard(container, "rightQuote", "Inspirational Quote Card", "Quote", "sparkles", "showRightQuote", "#8b5cf6");
-    container.createEl("h3", { text: "Widget Drag & Drop Layout" });
-    new import_obsidian4.Setting(container).setName("Reset Widget Order & Positions").setDesc("Restore all widgets back to their default columns and positions.").addButton((btn) => {
+    this.renderDefaultWidgetCard(railContent, "calendar", "Calendar Widget", "Calendar", "calendar", "showCalendar", "#8b5cf6");
+    this.renderDefaultWidgetCard(railContent, "graphView", "Graph View Widget", "Graph view", "git-fork", "showGraphView", "#8b5cf6");
+    this.renderDefaultWidgetCard(railContent, "streaks", "Streaks Tracker Widget", "Streaks", "flame", "showStreaks", "#f97316");
+    this.renderDefaultWidgetCard(railContent, "rightQuote", "Inspirational Quote Card", "Quote", "sparkles", "showRightQuote", "#8b5cf6");
+    const layoutContent = this.createCollapsibleSection(
+      container,
+      "Widget Drag & Drop Layout",
+      "move",
+      "Restore all widgets back to their default columns and positions",
+      false
+    );
+    new import_obsidian4.Setting(layoutContent).setName("Reset Widget Order & Positions").setDesc("Restore all widgets back to their default columns and positions.").addButton((btn) => {
       btn.setButtonText("Reset Layout").setWarning().onClick(async () => {
         this.plugin.settings.widgetLayout = {
           col1: ["todayTasks", "weeklyTasks"],
           col2: ["recentNotes", "quickCapture"],
-          col3: ["ongoingProjects", "bookmarks"],
+          col3: ["ongoingProjects", "deadlines", "bookmarks"],
           rail: ["calendar", "streaks", "graphView", "rightQuote"]
         };
         await this.plugin.saveSettings();
         new import_obsidian4.Notice("Widget layout reset to default!");
       });
     });
-    container.createEl("h3", { text: "Custom Dashboard Widgets" });
-    const customDesc = container.createEl("p", {
-      text: "Add custom cards to your dashboard to embed vault notes, custom checklists, or quick links.",
-      cls: "setting-item-description"
-    });
-    customDesc.style.marginBottom = "14px";
-    const customContainer = container.createDiv({ cls: "os-settings-custom-widgets" });
+    const customContent = this.createCollapsibleSection(
+      container,
+      "Custom Dashboard Widgets",
+      "plus-square",
+      "Add custom cards to your dashboard to embed vault notes, checklists, or links",
+      false
+    );
+    const customContainer = customContent.createDiv({ cls: "os-settings-custom-widgets" });
     this.renderCustomWidgetsList(customContainer);
   }
   renderDefaultWidgetCard(container, widgetId, name, defaultTitle, defaultIcon, visibilityKey, defaultColor) {
-    const card = container.createDiv({ cls: "os-settings-widget-card" });
+    const card = container.createDiv({ cls: "os-settings-widget-card is-collapsible" });
     const custom = this.plugin.settings.widgetCustomizations = this.plugin.settings.widgetCustomizations || {};
     const item = custom[widgetId] = custom[widgetId] || {};
-    new import_obsidian4.Setting(card).setName(name).addToggle((t) => {
+    const headerRow = new import_obsidian4.Setting(card).setName(name).addToggle((t) => {
       t.setTooltip("Enable/Disable").setValue(this.plugin.settings[visibilityKey] ?? true).onChange(async (val) => {
         this.plugin.settings[visibilityKey] = val;
         await this.plugin.saveSettings();
@@ -1103,8 +1183,22 @@ var OSDashboardSettingTab = class extends import_obsidian4.PluginSettingTab {
         await this.plugin.saveSettings();
         this.display();
       });
+    }).addButton((btn) => {
+      btn.setIcon("chevron-down").setTooltip("Customize appearance (title, icon, color)").setClass("os-widget-expand-btn").onClick(() => {
+        card.toggleClass("is-open", !card.hasClass("is-open"));
+        (0, import_obsidian4.setIcon)(btn.buttonEl, card.hasClass("is-open") ? "chevron-up" : "chevron-down");
+      });
     });
-    new import_obsidian4.Setting(card).setName("Title & Icon").setDesc(`Card title and Lucide icon (defaults: "${defaultTitle}", "${defaultIcon}").`).addText((text) => {
+    headerRow.nameEl.style.cursor = "pointer";
+    headerRow.nameEl.addEventListener("click", () => {
+      card.toggleClass("is-open", !card.hasClass("is-open"));
+      const expandBtn = card.querySelector(".os-widget-expand-btn");
+      if (expandBtn) {
+        (0, import_obsidian4.setIcon)(expandBtn, card.hasClass("is-open") ? "chevron-up" : "chevron-down");
+      }
+    });
+    const details = card.createDiv({ cls: "os-settings-widget-details" });
+    new import_obsidian4.Setting(details).setName("Title & Icon").setDesc(`Card title and Lucide icon (defaults: "${defaultTitle}", "${defaultIcon}").`).addText((text) => {
       text.setPlaceholder(defaultTitle).setValue(item.title || "").onChange(async (val) => {
         item.title = val.trim() || void 0;
         await this.plugin.saveSettings();
@@ -1115,14 +1209,14 @@ var OSDashboardSettingTab = class extends import_obsidian4.PluginSettingTab {
         await this.plugin.saveSettings();
       });
     });
-    new import_obsidian4.Setting(card).setName("Description (Optional)").setDesc("Subtitle shown under the card header.").addText((text) => {
+    new import_obsidian4.Setting(details).setName("Description (Optional)").setDesc("Subtitle shown under the card header.").addText((text) => {
       text.setPlaceholder("Subtitle / description").setValue(item.description || "").onChange(async (val) => {
         item.description = val.trim() || void 0;
         await this.plugin.saveSettings();
       });
       text.inputEl.style.width = "100%";
     });
-    const colorSetting = new import_obsidian4.Setting(card).setName("Icon Color").setDesc("Accent color for this widget's header icon.");
+    const colorSetting = new import_obsidian4.Setting(details).setName("Icon Color").setDesc("Accent color for this widget's header icon.");
     const colorWrapper = colorSetting.controlEl.createDiv({ cls: "os-folder-override-color-col" });
     colorWrapper.style.display = "flex";
     colorWrapper.style.alignItems = "center";
@@ -1190,8 +1284,8 @@ var OSDashboardSettingTab = class extends import_obsidian4.PluginSettingTab {
     container.empty();
     const widgets = this.plugin.settings.customWidgets || [];
     widgets.forEach((widget, idx) => {
-      const widgetCard = container.createDiv({ cls: "os-settings-widget-card" });
-      new import_obsidian4.Setting(widgetCard).setName(`Widget #${idx + 1}: ${widget.title || "Untitled"}`).addToggle((t) => {
+      const widgetCard = container.createDiv({ cls: "os-settings-widget-card is-collapsible" });
+      const headerRow = new import_obsidian4.Setting(widgetCard).setName(`Widget #${idx + 1}: ${widget.title || "Untitled"}`).addToggle((t) => {
         t.setTooltip("Enable/Disable").setValue(widget.enabled).onChange(async (val) => {
           widget.enabled = val;
           await this.plugin.saveSettings();
@@ -1202,8 +1296,22 @@ var OSDashboardSettingTab = class extends import_obsidian4.PluginSettingTab {
           await this.plugin.saveSettings();
           this.renderCustomWidgetsList(container);
         });
+      }).addButton((btn) => {
+        btn.setIcon("chevron-down").setTooltip("Expand / Collapse Settings").setClass("os-widget-expand-btn").onClick(() => {
+          widgetCard.toggleClass("is-open", !widgetCard.hasClass("is-open"));
+          (0, import_obsidian4.setIcon)(btn.buttonEl, widgetCard.hasClass("is-open") ? "chevron-up" : "chevron-down");
+        });
       });
-      new import_obsidian4.Setting(widgetCard).setName("Title & Icon").setDesc("Card header title and Lucide icon name (e.g. book-open, flame, star).").addText((text) => {
+      headerRow.nameEl.style.cursor = "pointer";
+      headerRow.nameEl.addEventListener("click", () => {
+        widgetCard.toggleClass("is-open", !widgetCard.hasClass("is-open"));
+        const expandBtn = widgetCard.querySelector(".os-widget-expand-btn");
+        if (expandBtn) {
+          (0, import_obsidian4.setIcon)(expandBtn, widgetCard.hasClass("is-open") ? "chevron-up" : "chevron-down");
+        }
+      });
+      const details = widgetCard.createDiv({ cls: "os-settings-widget-details" });
+      new import_obsidian4.Setting(details).setName("Title & Icon").setDesc("Card header title and Lucide icon name (e.g. book-open, flame, star).").addText((text) => {
         text.setPlaceholder("Title").setValue(widget.title).onChange(async (val) => {
           widget.title = val;
           await this.plugin.saveSettings();
@@ -1214,14 +1322,14 @@ var OSDashboardSettingTab = class extends import_obsidian4.PluginSettingTab {
           await this.plugin.saveSettings();
         });
       });
-      new import_obsidian4.Setting(widgetCard).setName("Description (Optional)").setDesc("Subtitle or brief description shown under the card header.").addText((text) => {
+      new import_obsidian4.Setting(details).setName("Description (Optional)").setDesc("Subtitle or brief description shown under the card header.").addText((text) => {
         text.setPlaceholder("e.g. My active project notes").setValue(widget.description || "").onChange(async (val) => {
           widget.description = val.trim() || void 0;
           await this.plugin.saveSettings();
         });
         text.inputEl.style.width = "100%";
       });
-      const colorSetting = new import_obsidian4.Setting(widgetCard).setName("Icon Color").setDesc("Accent color for this widget's header icon.");
+      const colorSetting = new import_obsidian4.Setting(details).setName("Icon Color").setDesc("Accent color for this widget's header icon.");
       const colorWrapper = colorSetting.controlEl.createDiv({ cls: "os-folder-override-color-col" });
       colorWrapper.style.display = "flex";
       colorWrapper.style.alignItems = "center";
@@ -1284,7 +1392,7 @@ var OSDashboardSettingTab = class extends import_obsidian4.PluginSettingTab {
           this.renderCustomWidgetsList(container);
         });
       }
-      new import_obsidian4.Setting(widgetCard).setName("Column & Type").setDesc("Target grid column and what content this widget renders.").addDropdown((dd) => {
+      new import_obsidian4.Setting(details).setName("Column & Type").setDesc("Target grid column and what content this widget renders.").addDropdown((dd) => {
         dd.addOption("1", "Column 1 (Left)").addOption("2", "Column 2 (Center)").addOption("3", "Column 3 (Right)").addOption("rail", "Right Rail (Companion)").setValue(String(widget.column || 1)).onChange(async (val) => {
           widget.column = val === "rail" ? "rail" : parseInt(val, 10);
           if (this.plugin.settings.widgetLayout) {
@@ -1312,7 +1420,7 @@ var OSDashboardSettingTab = class extends import_obsidian4.PluginSettingTab {
         });
       });
       if (widget.type === "markdown-note") {
-        const contentSetting = new import_obsidian4.Setting(widgetCard).setName("Vault Note Path").setDesc("Path to a markdown file in your vault (suggests notes as you type).").addText((t) => {
+        const contentSetting = new import_obsidian4.Setting(details).setName("Vault Note Path").setDesc("Path to a markdown file in your vault (suggests notes as you type).").addText((t) => {
           new FileSuggest(this.app, t.inputEl, async (file) => {
             widget.content = file.path;
             await this.plugin.saveSettings();
@@ -1323,20 +1431,20 @@ var OSDashboardSettingTab = class extends import_obsidian4.PluginSettingTab {
           });
         });
       } else if (widget.type === "custom-text") {
-        const contentSetting = new import_obsidian4.Setting(widgetCard).setName("Custom Content").setDesc("Custom markdown or text displayed inside the card.").addTextArea((t) => {
+        const contentSetting = new import_obsidian4.Setting(details).setName("Custom Content").setDesc("Custom markdown or text displayed inside the card.").addTextArea((t) => {
           t.setPlaceholder("Type markdown or reminders...").setValue(widget.content).onChange(async (val) => {
             widget.content = val;
             await this.plugin.saveSettings();
           });
         });
       } else if (widget.type === "dataview") {
-        new import_obsidian4.Setting(widgetCard).setName("Show Table Header").setDesc("Display the column header row at the top of the table.").addToggle((t) => {
+        new import_obsidian4.Setting(details).setName("Show Table Header").setDesc("Display the column header row at the top of the table.").addToggle((t) => {
           t.setValue(widget.showTableHeader !== false).onChange(async (val) => {
             widget.showTableHeader = val;
             await this.plugin.saveSettings();
           });
         });
-        const contentSetting = new import_obsidian4.Setting(widgetCard).setName("Dataview Query").setDesc("Dataview DQL query (e.g. TABLE file.mtime AS Modified FROM #project LIMIT 5) or dataviewjs script.").addTextArea((t) => {
+        const contentSetting = new import_obsidian4.Setting(details).setName("Dataview Query").setDesc("Dataview DQL query (e.g. TABLE file.mtime AS Modified FROM #project LIMIT 5) or dataviewjs script.").addTextArea((t) => {
           t.setPlaceholder("TABLE file.mtime AS Modified FROM #project SORT file.mtime DESC LIMIT 5").setValue(widget.content).onChange(async (val) => {
             widget.content = val;
             await this.plugin.saveSettings();
@@ -1346,7 +1454,7 @@ var OSDashboardSettingTab = class extends import_obsidian4.PluginSettingTab {
           t.inputEl.style.fontSize = "12px";
         });
       } else if (widget.type === "link-button") {
-        const buttonsSection = widgetCard.createDiv({ cls: "os-settings-buttons-section" });
+        const buttonsSection = details.createDiv({ cls: "os-settings-buttons-section" });
         new import_obsidian4.Setting(buttonsSection).setName("Buttons & Links").setDesc("Add multiple action buttons with custom labels and targets (URLs or [[Note]] links).");
         if (!widget.buttons || widget.buttons.length === 0) {
           if (widget.content) {
@@ -1455,11 +1563,51 @@ var OSDashboardSettingTab = class extends import_obsidian4.PluginSettingTab {
     });
   }
   // =========================================================================
-  // 4. TASKS & PROJECTS TAB
+  // 4. CONFIGURE WIDGETS TAB (COLLAPSIBLE SECTIONS)
   // =========================================================================
+  createCollapsibleSection(container, title, icon, description, defaultOpen = false) {
+    const isExpanded = this.openSections.has(title) || defaultOpen && !this.openSections.has(`__closed__${title}`);
+    const wrap = container.createDiv({ cls: `os-settings-collapse ${isExpanded ? "is-expanded" : ""}` });
+    const header = wrap.createDiv({ cls: "os-settings-collapse-header" });
+    const titleLeft = header.createDiv({ cls: "os-settings-collapse-left" });
+    const iconSpan = titleLeft.createSpan({ cls: "os-settings-collapse-icon" });
+    (0, import_obsidian4.setIcon)(iconSpan, icon);
+    const titleGroup = titleLeft.createDiv({ cls: "os-settings-collapse-title-group" });
+    titleGroup.createSpan({ cls: "os-settings-collapse-title", text: title });
+    if (description) {
+      titleGroup.createSpan({ cls: "os-settings-collapse-desc", text: description });
+    }
+    const chevron = header.createSpan({ cls: "os-settings-collapse-chevron" });
+    (0, import_obsidian4.setIcon)(chevron, "chevron-down");
+    const content = wrap.createDiv({ cls: "os-settings-collapse-content" });
+    header.addEventListener("click", () => {
+      const willExpand = !wrap.hasClass("is-expanded");
+      wrap.toggleClass("is-expanded", willExpand);
+      if (willExpand) {
+        this.openSections.add(title);
+        this.openSections.delete(`__closed__${title}`);
+      } else {
+        this.openSections.delete(title);
+        this.openSections.add(`__closed__${title}`);
+      }
+    });
+    return content;
+  }
   renderTasksProjectsTab(container) {
-    container.createEl("h3", { text: "Daily & Weekly Task Files" });
-    new import_obsidian4.Setting(container).setName("Daily Tasks File (Plan)").setDesc("Path to the file containing daily planned tasks organized by date headings (e.g. Daily Tasks.md).").addText((text) => {
+    const intro = container.createEl("div", { cls: "os-settings-tab-intro" });
+    intro.createEl("h3", { text: "Configure Built-in Widgets" });
+    intro.createEl("p", {
+      text: "Fine-tune file paths, folder targets, frontmatter properties, and limits for each built-in widget.",
+      cls: "setting-item-description"
+    });
+    const tasksContent = this.createCollapsibleSection(
+      container,
+      "Daily & Weekly Task Files",
+      "check-square",
+      "Manage daily planning, logs, and weekly task files",
+      false
+    );
+    new import_obsidian4.Setting(tasksContent).setName("Daily Tasks File (Plan)").setDesc("Path to the file containing daily planned tasks organized by date headings (e.g. Daily Tasks.md).").addText((text) => {
       new FileSuggest(this.app, text.inputEl, async (file) => {
         this.plugin.settings.dailyTasksFile = file.path;
         await this.plugin.saveSettings();
@@ -1469,7 +1617,7 @@ var OSDashboardSettingTab = class extends import_obsidian4.PluginSettingTab {
         await this.plugin.saveSettings();
       });
     });
-    new import_obsidian4.Setting(container).setName("Daily Logs File (What I Did)").setDesc("Path to the file containing what you actually did today (e.g. Daily Logs.md).").addText((text) => {
+    new import_obsidian4.Setting(tasksContent).setName("Daily Logs File (What I Did)").setDesc("Path to the file containing what you actually did today (e.g. Daily Logs.md).").addText((text) => {
       new FileSuggest(this.app, text.inputEl, async (file) => {
         this.plugin.settings.dailyLogFile = file.path;
         await this.plugin.saveSettings();
@@ -1479,13 +1627,13 @@ var OSDashboardSettingTab = class extends import_obsidian4.PluginSettingTab {
         await this.plugin.saveSettings();
       });
     });
-    new import_obsidian4.Setting(container).setName("Auto-Log Completed Tasks").setDesc("When you check off a planned task in 'What I had to do', automatically append it to your Daily Logs.").addToggle((toggle) => {
+    new import_obsidian4.Setting(tasksContent).setName("Auto-Log Completed Tasks").setDesc("When you check off a planned task in 'What I had to do', automatically append it to your Daily Logs.").addToggle((toggle) => {
       toggle.setValue(this.plugin.settings.autoLogToDailyLog ?? true).onChange(async (val) => {
         this.plugin.settings.autoLogToDailyLog = val;
         await this.plugin.saveSettings();
       });
     });
-    new import_obsidian4.Setting(container).setName("Weekly Tasks File").setDesc("Path to the file containing weekly tasks (e.g. Weekly Tasks.md).").addText((text) => {
+    new import_obsidian4.Setting(tasksContent).setName("Weekly Tasks File").setDesc("Path to the file containing weekly tasks (e.g. Weekly Tasks.md).").addText((text) => {
       new FileSuggest(this.app, text.inputEl, async (file) => {
         this.plugin.settings.weeklyTasksFile = file.path;
         await this.plugin.saveSettings();
@@ -1495,40 +1643,95 @@ var OSDashboardSettingTab = class extends import_obsidian4.PluginSettingTab {
         await this.plugin.saveSettings();
       });
     });
-    container.createEl("h3", { text: "Quick Capture" });
-    new import_obsidian4.Setting(container).setName("Quick Capture Folder").setDesc("Folder where notes created via the Quick Capture box will be saved (e.g. 00 Inbox).").addText((text) => {
+    const qcContent = this.createCollapsibleSection(
+      container,
+      "Quick Capture",
+      "edit-3",
+      "Destination folder for quick notes created from dashboard",
+      false
+    );
+    new import_obsidian4.Setting(qcContent).setName("Quick Capture Folder").setDesc("Folder where notes created via the Quick Capture box will be saved (e.g. 00 Inbox).").addText((text) => {
       text.setPlaceholder("00 Inbox").setValue(this.plugin.settings.quickCaptureFolder).onChange(async (val) => {
         this.plugin.settings.quickCaptureFolder = val.trim();
         await this.plugin.saveSettings();
       });
     });
-    container.createEl("h3", { text: "Ongoing Projects" });
-    new import_obsidian4.Setting(container).setName("Projects Folder").setDesc("Folder to scan for project notes (leave blank to search entire vault).").addText((text) => {
-      text.setPlaceholder("03 Projects").setValue(this.plugin.settings.projectsFolder).onChange(async (val) => {
+    const projectsContent = this.createCollapsibleSection(
+      container,
+      "Ongoing Projects",
+      "target",
+      "Configure folders and frontmatter for active project tracking",
+      false
+    );
+    new import_obsidian4.Setting(projectsContent).setName("Projects Folder(s)").setDesc('Folders to scan for project notes. Separate multiple folders with commas. If a folder name contains a comma, enclose it in double quotes (e.g. "03 Projects", "Work, Tasks"). Leave blank to search entire vault.').addText((text) => {
+      text.setPlaceholder("Leave blank to search entire vault").setValue(this.plugin.settings.projectsFolder).onChange(async (val) => {
         this.plugin.settings.projectsFolder = val.trim();
         await this.plugin.saveSettings();
       });
     });
-    new import_obsidian4.Setting(container).setName("Status Property Name").setDesc("Frontmatter property indicating project status.").addText((text) => {
+    new import_obsidian4.Setting(projectsContent).setName("Status Property Name").setDesc("Frontmatter property indicating project status.").addText((text) => {
       text.setPlaceholder("status").setValue(this.plugin.settings.projectStatusProp).onChange(async (val) => {
         this.plugin.settings.projectStatusProp = val.trim() || "status";
         await this.plugin.saveSettings();
       });
     });
-    new import_obsidian4.Setting(container).setName("Active Status Values").setDesc("Comma-separated status values that mark a project as ongoing (e.g. in-progress, active).").addText((text) => {
+    new import_obsidian4.Setting(projectsContent).setName("Active Status Values").setDesc("Comma-separated status values that mark a project as ongoing (e.g. in-progress, active).").addText((text) => {
       text.setPlaceholder("in-progress, active, ongoing").setValue(this.plugin.settings.projectStatusValues.join(", ")).onChange(async (val) => {
         this.plugin.settings.projectStatusValues = val.split(",").map((v) => v.trim()).filter(Boolean);
         await this.plugin.saveSettings();
       });
     });
-    new import_obsidian4.Setting(container).setName("Progress Property Name").setDesc("Frontmatter property for manual percentage. If missing, task checkboxes are calculated automatically.").addText((text) => {
+    new import_obsidian4.Setting(projectsContent).setName("Progress Property Name").setDesc("Frontmatter property for manual percentage. If missing, task checkboxes are calculated automatically.").addText((text) => {
       text.setPlaceholder("progress").setValue(this.plugin.settings.projectProgressProp).onChange(async (val) => {
         this.plugin.settings.projectProgressProp = val.trim() || "progress";
         await this.plugin.saveSettings();
       });
     });
-    container.createEl("h3", { text: "Recent Notes" });
-    new import_obsidian4.Setting(container).setName("Recent Notes Limit").setDesc("Maximum number of recently modified notes to display.").addText((text) => {
+    const deadlinesContent = this.createCollapsibleSection(
+      container,
+      "Deadlines Tracker",
+      "calendar-clock",
+      "Track target dates, remaining time, countdowns, and overdue alerts",
+      false
+    );
+    new import_obsidian4.Setting(deadlinesContent).setName("Deadlines Folder(s)").setDesc('Folders to scan for notes with deadlines. Separate multiple folders with commas or double quotes (e.g. "03 Projects", "04 Work"). Leave blank to search entire vault.').addText((text) => {
+      text.setPlaceholder("Leave blank to search entire vault").setValue(this.plugin.settings.deadlinesFolders || "").onChange(async (val) => {
+        this.plugin.settings.deadlinesFolders = val.trim();
+        await this.plugin.saveSettings();
+      });
+    });
+    new import_obsidian4.Setting(deadlinesContent).setName("Deadline Property Name (Target)").setDesc("Frontmatter property holding the target date (e.g. target_completion_date, deadline, due). Notes with this property will show in the Deadline widget.").addText((text) => {
+      text.setPlaceholder("target_completion_date").setValue(this.plugin.settings.deadlineProp || "target_completion_date").onChange(async (val) => {
+        this.plugin.settings.deadlineProp = val.trim() || "target_completion_date";
+        await this.plugin.saveSettings();
+      });
+    });
+    new import_obsidian4.Setting(deadlinesContent).setName("Completion Property (Finished Trigger)").setDesc("When this property is filled with a date or value (e.g. 'completed_date: 2026-10-25' or 'completed_date: true'), the milestone is treated as complete and removed from the widget. Empty means still active.").addText((text) => {
+      text.setPlaceholder("completed_date").setValue(this.plugin.settings.deadlineCompletedProp || "completed_date").onChange(async (val) => {
+        this.plugin.settings.deadlineCompletedProp = val.trim() || "completed_date";
+        await this.plugin.saveSettings();
+      });
+    });
+    new import_obsidian4.Setting(deadlinesContent).setName("Status Property Name (Badge Display)").setDesc("Frontmatter property displayed as the badge tag next to the project title (e.g. 'evolve', 'need-review', 'in-progress'). No need to define status values.").addText((text) => {
+      text.setPlaceholder("status").setValue(this.plugin.settings.deadlineStatusProp || "status").onChange(async (val) => {
+        this.plugin.settings.deadlineStatusProp = val.trim() || "status";
+        await this.plugin.saveSettings();
+      });
+    });
+    new import_obsidian4.Setting(deadlinesContent).setName("Start Date Property (Optional)").setDesc("Frontmatter property for project start date (e.g. start_date, created, started). If omitted, note creation date is used to calculate the circular current/deadline progress gauge.").addText((text) => {
+      text.setPlaceholder("start_date").setValue(this.plugin.settings.deadlineProgressProp || "start_date").onChange(async (val) => {
+        this.plugin.settings.deadlineProgressProp = val.trim() || "start_date";
+        await this.plugin.saveSettings();
+      });
+    });
+    const recentContent = this.createCollapsibleSection(
+      container,
+      "Recent Notes",
+      "file-text",
+      "Configure limits and excluded directories for recent notes",
+      false
+    );
+    new import_obsidian4.Setting(recentContent).setName("Recent Notes Limit").setDesc("Maximum number of recently modified notes to display.").addText((text) => {
       text.setPlaceholder("8").setValue(String(this.plugin.settings.recentNotesLimit)).onChange(async (val) => {
         const num = parseInt(val, 10);
         if (!isNaN(num) && num > 0) {
@@ -1537,9 +1740,239 @@ var OSDashboardSettingTab = class extends import_obsidian4.PluginSettingTab {
         }
       });
     });
-    new import_obsidian4.Setting(container).setName("Excluded Folders").setDesc("Comma-separated folders to ignore in Recent Notes (e.g. _attachments, _scripts, _templates, Templates, .trash).").addText((text) => {
+    new import_obsidian4.Setting(recentContent).setName("Excluded Folders").setDesc("Comma-separated folders to ignore in Recent Notes (e.g. _attachments, _scripts, _templates, Templates, .trash).").addText((text) => {
       text.setPlaceholder("_attachments, _scripts, _templates, Templates, .trash").setValue((this.plugin.settings.recentNotesExcludeFolders || []).join(", ")).onChange(async (val) => {
         this.plugin.settings.recentNotesExcludeFolders = val.split(",").map((f) => f.trim()).filter(Boolean);
+        await this.plugin.saveSettings();
+      });
+    });
+    const habitsContent = this.createCollapsibleSection(
+      container,
+      "Habit Streaks Tracker",
+      "flame",
+      "Configure habits markdown file, archive path, and auto-freeze streak protection",
+      false
+    );
+    new import_obsidian4.Setting(habitsContent).setName("Habits File").setDesc("Path to the markdown file storing your active habit streaks and callouts (e.g. Habits.md).").addText((text) => {
+      new FileSuggest(this.app, text.inputEl, async (file) => {
+        this.plugin.settings.habitsFile = file.path;
+        await this.plugin.saveSettings();
+      });
+      text.setPlaceholder("Habits.md").setValue(this.plugin.settings.habitsFile || "Habits.md").onChange(async (val) => {
+        this.plugin.settings.habitsFile = val.trim() || "Habits.md";
+        await this.plugin.saveSettings();
+      });
+    });
+    new import_obsidian4.Setting(habitsContent).setName("Habits Archive File").setDesc("Path to the markdown file where archived habits are moved (e.g. 99 Archive/Habits.md). Created automatically if needed.").addText((text) => {
+      new FileSuggest(this.app, text.inputEl, async (file) => {
+        this.plugin.settings.archiveHabitsFile = file.path;
+        await this.plugin.saveSettings();
+      });
+      text.setPlaceholder("99 Archive/Habits.md").setValue(this.plugin.settings.archiveHabitsFile || "99 Archive/Habits.md").onChange(async (val) => {
+        this.plugin.settings.archiveHabitsFile = val.trim() || "99 Archive/Habits.md";
+        await this.plugin.saveSettings();
+      });
+    });
+    new import_obsidian4.Setting(habitsContent).setName("Auto-Freeze Missed Habits").setDesc("Automatically use an available freeze from the habit's quota if you miss completing it, protecting your streak from resetting.").addToggle((toggle) => {
+      toggle.setValue(this.plugin.settings.autoFreezeHabits ?? true).onChange(async (val) => {
+        this.plugin.settings.autoFreezeHabits = val;
+        await this.plugin.saveSettings();
+        if (val) {
+          await this.plugin.runAutoFreeze();
+        }
+      });
+    });
+    const calendarContent = this.createCollapsibleSection(
+      container,
+      "Calendar & Google Calendar Sync",
+      "calendar",
+      "Configure local events file, Google Calendar iCal sync, and event reminders",
+      false
+    );
+    new import_obsidian4.Setting(calendarContent).setName("Events File").setDesc("Path to the Markdown file where local events are stored (e.g. Events.md). Uses the same date-heading format as Daily Tasks (## YYYY-MM-DD).").addText((text) => {
+      new FileSuggest(this.app, text.inputEl, async (file) => {
+        this.plugin.settings.calendarEventsFile = file.path;
+        await this.plugin.saveSettings();
+      });
+      text.setPlaceholder("Events.md").setValue(this.plugin.settings.calendarEventsFile || "Events.md").onChange(async (val) => {
+        this.plugin.settings.calendarEventsFile = val.trim() || "Events.md";
+        await this.plugin.saveSettings();
+      });
+    });
+    const isKeychainSupported = this.plugin.calendarService.isKeychainAvailable();
+    const SecretComponentClass = obsidian.SecretComponent;
+    const useKeychain = Boolean(
+      this.plugin.settings.googleCalendarUseKeychain || isKeychainSupported && Boolean(this.plugin.settings.googleCalendarSecretId)
+    );
+    new import_obsidian4.Setting(calendarContent).setName("Use Obsidian Keychain (SecretStorage)").setDesc(
+      isKeychainSupported ? "Store your private Google Calendar iCal address securely in Obsidian Keychain instead of plaintext in settings." : "Obsidian Keychain (SecretStorage) is supported in Obsidian v1.11.4+. You are currently using direct URL storage."
+    ).addToggle((toggle) => {
+      toggle.setValue(useKeychain).setDisabled(!isKeychainSupported).onChange(async (val) => {
+        this.plugin.settings.googleCalendarUseKeychain = val;
+        await this.plugin.saveSettings();
+        this.display();
+      });
+    });
+    if (useKeychain && isKeychainSupported) {
+      if (SecretComponentClass) {
+        new import_obsidian4.Setting(calendarContent).setName("Keychain Secret").setDesc("Select an existing secret or click '+' to create a secret containing your Google Calendar .ics URL.").addComponent((cb) => {
+          const comp = new SecretComponentClass(this.app, cb);
+          comp.setValue(this.plugin.settings.googleCalendarSecretId || "").onChange(async (val) => {
+            this.plugin.settings.googleCalendarSecretId = val;
+            await this.plugin.saveSettings();
+          });
+          return comp;
+        }).addButton((btn) => {
+          btn.setButtonText("Sync Events Now").setCta().onClick(async () => {
+            const url = this.plugin.calendarService.getCalendarUrl(this.plugin.settings);
+            if (!url) {
+              new import_obsidian4.Notice("No secret selected or secret is empty in Obsidian Keychain.");
+              return;
+            }
+            btn.setButtonText("Syncing...");
+            btn.setDisabled(true);
+            try {
+              const events = await this.plugin.calendarService.fetchEvents(url);
+              this.plugin.settings.cachedCalendarEvents = events;
+              this.plugin.settings.lastCalendarSyncTime = Date.now();
+              await this.plugin.saveSettings();
+              new import_obsidian4.Notice(`\u2705 Synced ${events.length} Google Calendar event${events.length === 1 ? "" : "s"} from Keychain!`);
+            } catch (err) {
+              new import_obsidian4.Notice(`\u274C Failed to sync: ${err.message || "Invalid iCal URL or network error"}`);
+            } finally {
+              btn.setButtonText("Sync Events Now");
+              btn.setDisabled(false);
+            }
+          });
+        });
+      } else {
+        new import_obsidian4.Setting(calendarContent).setName("Keychain Secret Identifier").setDesc("Enter the name of your secret in Obsidian Keychain.").addText((text) => {
+          text.setPlaceholder("e.g. google-calendar-url").setValue(this.plugin.settings.googleCalendarSecretId || "").onChange(async (val) => {
+            this.plugin.settings.googleCalendarSecretId = val.trim();
+            await this.plugin.saveSettings();
+          });
+        }).addButton((btn) => {
+          btn.setButtonText("Sync Events Now").setCta().onClick(async () => {
+            const url = this.plugin.calendarService.getCalendarUrl(this.plugin.settings);
+            if (!url) {
+              new import_obsidian4.Notice("No secret configured or secret is empty in Obsidian Keychain.");
+              return;
+            }
+            btn.setButtonText("Syncing...");
+            btn.setDisabled(true);
+            try {
+              const events = await this.plugin.calendarService.fetchEvents(url);
+              this.plugin.settings.cachedCalendarEvents = events;
+              this.plugin.settings.lastCalendarSyncTime = Date.now();
+              await this.plugin.saveSettings();
+              new import_obsidian4.Notice(`\u2705 Synced ${events.length} Google Calendar event${events.length === 1 ? "" : "s"} from Keychain!`);
+            } catch (err) {
+              new import_obsidian4.Notice(`\u274C Failed to sync: ${err.message || "Invalid iCal URL or network error"}`);
+            } finally {
+              btn.setButtonText("Sync Events Now");
+              btn.setDisabled(false);
+            }
+          });
+        });
+      }
+      const secretStorage = this.app.secretStorage;
+      if (secretStorage && typeof secretStorage.setSecret === "function") {
+        let saveUrlInput = "";
+        new import_obsidian4.Setting(calendarContent).setName("Save New URL to Keychain").setDesc("Paste a new Google Calendar .ics URL to store it securely into Keychain as 'google-calendar-url'.").addText((text) => {
+          text.setPlaceholder("https://calendar.google.com/calendar/ical/.../basic.ics").onChange((val) => {
+            saveUrlInput = val.trim();
+          });
+          text.inputEl.style.width = "220px";
+        }).addButton((btn) => {
+          btn.setButtonText("Save to Keychain").onClick(async () => {
+            if (!saveUrlInput || !saveUrlInput.startsWith("http://") && !saveUrlInput.startsWith("https://")) {
+              new import_obsidian4.Notice("Please enter a valid https:// URL.");
+              return;
+            }
+            try {
+              await secretStorage.setSecret("google-calendar-url", saveUrlInput);
+              this.plugin.settings.googleCalendarSecretId = "google-calendar-url";
+              this.plugin.settings.googleCalendarUrl = "";
+              await this.plugin.saveSettings();
+              new import_obsidian4.Notice("\u2705 Saved Google Calendar URL to Obsidian Keychain!");
+              this.display();
+            } catch (err) {
+              new import_obsidian4.Notice(`Failed to save to Keychain: ${err?.message || "Unknown error"}`);
+            }
+          });
+        });
+      }
+    } else {
+      new import_obsidian4.Setting(calendarContent).setName("Google Calendar Address (Private iCal URL)").setDesc("In Google Calendar on the Web, go to Settings > Your Calendar > 'Secret address in iCal format' and paste the URL here.").addText((text) => {
+        text.setPlaceholder("https://calendar.google.com/calendar/ical/.../basic.ics").setValue(this.plugin.settings.googleCalendarUrl || "").onChange(async (val) => {
+          this.plugin.settings.googleCalendarUrl = val.trim();
+          await this.plugin.saveSettings();
+        });
+        text.inputEl.style.width = "260px";
+      }).addButton((btn) => {
+        btn.setButtonText("Sync Events Now").setCta().onClick(async () => {
+          const url = this.plugin.calendarService.getCalendarUrl(this.plugin.settings);
+          if (!url) {
+            new import_obsidian4.Notice("Please enter a Google Calendar iCal address first.");
+            return;
+          }
+          btn.setButtonText("Syncing...");
+          btn.setDisabled(true);
+          try {
+            const events = await this.plugin.calendarService.fetchEvents(url);
+            this.plugin.settings.cachedCalendarEvents = events;
+            this.plugin.settings.lastCalendarSyncTime = Date.now();
+            await this.plugin.saveSettings();
+            new import_obsidian4.Notice(`\u2705 Synced ${events.length} Google Calendar event${events.length === 1 ? "" : "s"}!`);
+          } catch (err) {
+            new import_obsidian4.Notice(`\u274C Failed to sync: ${err.message || "Invalid iCal URL or network error"}`);
+          } finally {
+            btn.setButtonText("Sync Events Now");
+            btn.setDisabled(false);
+          }
+        });
+      });
+    }
+    new import_obsidian4.Setting(calendarContent).setName("Show Connect Banner on Calendar Widget").setDesc("Display the banner prompt to add a Google Calendar address when no address is set.").addToggle((toggle) => {
+      toggle.setValue(this.plugin.settings.showGoogleCalendarBanner ?? true).onChange(async (val) => {
+        this.plugin.settings.showGoogleCalendarBanner = val;
+        await this.plugin.saveSettings();
+      });
+    });
+    new import_obsidian4.Setting(calendarContent).setName("Auto-sync Events in Background").setDesc("Automatically refresh events from Google Calendar every few minutes.").addToggle((toggle) => {
+      toggle.setValue(this.plugin.settings.googleCalendarAutoSync ?? true).onChange(async (val) => {
+        this.plugin.settings.googleCalendarAutoSync = val;
+        await this.plugin.saveSettings();
+      });
+    });
+    new import_obsidian4.Setting(calendarContent).setName("Event Reminders & Notifications").setDesc("Trigger an in-app notice and desktop notification before an event begins.").addToggle((toggle) => {
+      toggle.setValue(this.plugin.settings.enableCalendarNotifications ?? true).onChange(async (val) => {
+        this.plugin.settings.enableCalendarNotifications = val;
+        await this.plugin.saveSettings();
+      });
+    });
+    new import_obsidian4.Setting(calendarContent).setName("Notification Lead Time").setDesc("How many minutes before an event starts to notify you.").addDropdown((dd) => {
+      dd.addOption("5", "5 minutes before").addOption("10", "10 minutes before (Default)").addOption("15", "15 minutes before").addOption("30", "30 minutes before").setValue(String(this.plugin.settings.calendarNotificationLeadMinutes || 10)).onChange(async (val) => {
+        this.plugin.settings.calendarNotificationLeadMinutes = parseInt(val, 10) || 10;
+        await this.plugin.saveSettings();
+      });
+    });
+    const quoteContent = this.createCollapsibleSection(
+      container,
+      "Companion Rail Quote",
+      "sparkles",
+      "Configure inspirational quote text and author for the right rail widget",
+      false
+    );
+    new import_obsidian4.Setting(quoteContent).setName("Quote Text").setDesc("Inspirational quote displayed in the right rail widget.").addTextArea((text) => {
+      text.setPlaceholder("Consistency is more important than intensity.").setValue(this.plugin.settings.rightRailQuote).onChange(async (val) => {
+        this.plugin.settings.rightRailQuote = val;
+        await this.plugin.saveSettings();
+      });
+    });
+    new import_obsidian4.Setting(quoteContent).setName("Quote Author (Optional)").setDesc("Author name or source.").addText((text) => {
+      text.setPlaceholder("e.g. Bruce Lee").setValue(this.plugin.settings.rightRailQuoteAuthor || "").onChange(async (val) => {
+        this.plugin.settings.rightRailQuoteAuthor = val;
         await this.plugin.saveSettings();
       });
     });
@@ -1711,229 +2144,6 @@ var OSDashboardSettingTab = class extends import_obsidian4.PluginSettingTab {
       });
       await this.plugin.saveSettings();
       this.renderLinksSettings(container);
-    });
-  }
-  // =========================================================================
-  // 5. STREAKS & RIGHT RAIL TAB
-  // =========================================================================
-  renderStreaksRailTab(container) {
-    container.createEl("h3", { text: "Habit Streaks Configuration" });
-    new import_obsidian4.Setting(container).setName("Habits File").setDesc("Path to the markdown file storing your active habit streaks and callouts (e.g. Habits.md).").addText((text) => {
-      new FileSuggest(this.app, text.inputEl, async (file) => {
-        this.plugin.settings.habitsFile = file.path;
-        await this.plugin.saveSettings();
-      });
-      text.setPlaceholder("Habits.md").setValue(this.plugin.settings.habitsFile || "Habits.md").onChange(async (val) => {
-        this.plugin.settings.habitsFile = val.trim() || "Habits.md";
-        await this.plugin.saveSettings();
-      });
-    });
-    new import_obsidian4.Setting(container).setName("Habits Archive File").setDesc("Path to the markdown file where archived habits are moved (e.g. 99 Archive/Habits.md). Created automatically if needed.").addText((text) => {
-      new FileSuggest(this.app, text.inputEl, async (file) => {
-        this.plugin.settings.archiveHabitsFile = file.path;
-        await this.plugin.saveSettings();
-      });
-      text.setPlaceholder("99 Archive/Habits.md").setValue(this.plugin.settings.archiveHabitsFile || "99 Archive/Habits.md").onChange(async (val) => {
-        this.plugin.settings.archiveHabitsFile = val.trim() || "99 Archive/Habits.md";
-        await this.plugin.saveSettings();
-      });
-    });
-    new import_obsidian4.Setting(container).setName("Auto-Freeze Missed Habits").setDesc("Automatically use an available freeze from the habit's quota if you miss completing it, protecting your streak from resetting.").addToggle((toggle) => {
-      toggle.setValue(this.plugin.settings.autoFreezeHabits ?? true).onChange(async (val) => {
-        this.plugin.settings.autoFreezeHabits = val;
-        await this.plugin.saveSettings();
-        if (val) {
-          await this.plugin.runAutoFreeze();
-        }
-      });
-    });
-    container.createEl("h3", { text: "Calendar Events File (.md)" });
-    new import_obsidian4.Setting(container).setName("Events File").setDesc("Path to the Markdown file where local events are stored (e.g. Events.md). Uses the same date-heading format as Daily Tasks (## YYYY-MM-DD).").addText((text) => {
-      new FileSuggest(this.app, text.inputEl, async (file) => {
-        this.plugin.settings.calendarEventsFile = file.path;
-        await this.plugin.saveSettings();
-      });
-      text.setPlaceholder("Events.md").setValue(this.plugin.settings.calendarEventsFile || "Events.md").onChange(async (val) => {
-        this.plugin.settings.calendarEventsFile = val.trim() || "Events.md";
-        await this.plugin.saveSettings();
-      });
-    });
-    container.createEl("h3", { text: "Google Calendar Integration" });
-    const calDesc = container.createEl("p", {
-      cls: "setting-item-description",
-      text: "Display real-time events on your Calendar widget with colored event chips and event notifications."
-    });
-    calDesc.style.marginBottom = "14px";
-    const isKeychainSupported = this.plugin.calendarService.isKeychainAvailable();
-    const SecretComponentClass = obsidian.SecretComponent;
-    const useKeychain = Boolean(
-      this.plugin.settings.googleCalendarUseKeychain || isKeychainSupported && Boolean(this.plugin.settings.googleCalendarSecretId)
-    );
-    new import_obsidian4.Setting(container).setName("Use Obsidian Keychain (SecretStorage)").setDesc(
-      isKeychainSupported ? "Store your private Google Calendar iCal address securely in Obsidian Keychain instead of plaintext in settings." : "Obsidian Keychain (SecretStorage) is supported in Obsidian v1.11.4+. You are currently using direct URL storage."
-    ).addToggle((toggle) => {
-      toggle.setValue(useKeychain).setDisabled(!isKeychainSupported).onChange(async (val) => {
-        this.plugin.settings.googleCalendarUseKeychain = val;
-        await this.plugin.saveSettings();
-        this.display();
-      });
-    });
-    if (useKeychain && isKeychainSupported) {
-      if (SecretComponentClass) {
-        new import_obsidian4.Setting(container).setName("Keychain Secret").setDesc("Select an existing secret or click '+' to create a secret containing your Google Calendar .ics URL.").addComponent((cb) => {
-          const comp = new SecretComponentClass(this.app, cb);
-          comp.setValue(this.plugin.settings.googleCalendarSecretId || "").onChange(async (val) => {
-            this.plugin.settings.googleCalendarSecretId = val;
-            await this.plugin.saveSettings();
-          });
-          return comp;
-        }).addButton((btn) => {
-          btn.setButtonText("Sync Events Now").setCta().onClick(async () => {
-            const url = this.plugin.calendarService.getCalendarUrl(this.plugin.settings);
-            if (!url) {
-              new import_obsidian4.Notice("No secret selected or secret is empty in Obsidian Keychain.");
-              return;
-            }
-            btn.setButtonText("Syncing...");
-            btn.setDisabled(true);
-            try {
-              const events = await this.plugin.calendarService.fetchEvents(url);
-              this.plugin.settings.cachedCalendarEvents = events;
-              this.plugin.settings.lastCalendarSyncTime = Date.now();
-              await this.plugin.saveSettings();
-              new import_obsidian4.Notice(`\u2705 Synced ${events.length} Google Calendar event${events.length === 1 ? "" : "s"} from Keychain!`);
-            } catch (err) {
-              new import_obsidian4.Notice(`\u274C Failed to sync: ${err.message || "Invalid iCal URL or network error"}`);
-            } finally {
-              btn.setButtonText("Sync Events Now");
-              btn.setDisabled(false);
-            }
-          });
-        });
-      } else {
-        new import_obsidian4.Setting(container).setName("Keychain Secret Identifier").setDesc("Enter the name of your secret in Obsidian Keychain.").addText((text) => {
-          text.setPlaceholder("e.g. google-calendar-url").setValue(this.plugin.settings.googleCalendarSecretId || "").onChange(async (val) => {
-            this.plugin.settings.googleCalendarSecretId = val.trim();
-            await this.plugin.saveSettings();
-          });
-        }).addButton((btn) => {
-          btn.setButtonText("Sync Events Now").setCta().onClick(async () => {
-            const url = this.plugin.calendarService.getCalendarUrl(this.plugin.settings);
-            if (!url) {
-              new import_obsidian4.Notice("No secret configured or secret is empty in Obsidian Keychain.");
-              return;
-            }
-            btn.setButtonText("Syncing...");
-            btn.setDisabled(true);
-            try {
-              const events = await this.plugin.calendarService.fetchEvents(url);
-              this.plugin.settings.cachedCalendarEvents = events;
-              this.plugin.settings.lastCalendarSyncTime = Date.now();
-              await this.plugin.saveSettings();
-              new import_obsidian4.Notice(`\u2705 Synced ${events.length} Google Calendar event${events.length === 1 ? "" : "s"} from Keychain!`);
-            } catch (err) {
-              new import_obsidian4.Notice(`\u274C Failed to sync: ${err.message || "Invalid iCal URL or network error"}`);
-            } finally {
-              btn.setButtonText("Sync Events Now");
-              btn.setDisabled(false);
-            }
-          });
-        });
-      }
-      const secretStorage = this.app.secretStorage;
-      if (secretStorage && typeof secretStorage.setSecret === "function") {
-        let saveUrlInput = "";
-        new import_obsidian4.Setting(container).setName("Save New URL to Keychain").setDesc("Paste a new Google Calendar .ics URL to store it securely into Keychain as 'google-calendar-url'.").addText((text) => {
-          text.setPlaceholder("https://calendar.google.com/calendar/ical/.../basic.ics").onChange((val) => {
-            saveUrlInput = val.trim();
-          });
-          text.inputEl.style.width = "220px";
-        }).addButton((btn) => {
-          btn.setButtonText("Save to Keychain").onClick(async () => {
-            if (!saveUrlInput || !saveUrlInput.startsWith("http://") && !saveUrlInput.startsWith("https://")) {
-              new import_obsidian4.Notice("Please enter a valid https:// URL.");
-              return;
-            }
-            try {
-              await secretStorage.setSecret("google-calendar-url", saveUrlInput);
-              this.plugin.settings.googleCalendarSecretId = "google-calendar-url";
-              this.plugin.settings.googleCalendarUrl = "";
-              await this.plugin.saveSettings();
-              new import_obsidian4.Notice("\u2705 Saved Google Calendar URL to Obsidian Keychain!");
-              this.display();
-            } catch (err) {
-              new import_obsidian4.Notice(`Failed to save to Keychain: ${err?.message || "Unknown error"}`);
-            }
-          });
-        });
-      }
-    } else {
-      new import_obsidian4.Setting(container).setName("Google Calendar Address (Private iCal URL)").setDesc("In Google Calendar on the Web, go to Settings > Your Calendar > 'Secret address in iCal format' and paste the URL here.").addText((text) => {
-        text.setPlaceholder("https://calendar.google.com/calendar/ical/.../basic.ics").setValue(this.plugin.settings.googleCalendarUrl || "").onChange(async (val) => {
-          this.plugin.settings.googleCalendarUrl = val.trim();
-          await this.plugin.saveSettings();
-        });
-        text.inputEl.style.width = "260px";
-      }).addButton((btn) => {
-        btn.setButtonText("Sync Events Now").setCta().onClick(async () => {
-          const url = this.plugin.calendarService.getCalendarUrl(this.plugin.settings);
-          if (!url) {
-            new import_obsidian4.Notice("Please enter a Google Calendar iCal address first.");
-            return;
-          }
-          btn.setButtonText("Syncing...");
-          btn.setDisabled(true);
-          try {
-            const events = await this.plugin.calendarService.fetchEvents(url);
-            this.plugin.settings.cachedCalendarEvents = events;
-            this.plugin.settings.lastCalendarSyncTime = Date.now();
-            await this.plugin.saveSettings();
-            new import_obsidian4.Notice(`\u2705 Synced ${events.length} Google Calendar event${events.length === 1 ? "" : "s"}!`);
-          } catch (err) {
-            new import_obsidian4.Notice(`\u274C Failed to sync: ${err.message || "Invalid iCal URL or network error"}`);
-          } finally {
-            btn.setButtonText("Sync Events Now");
-            btn.setDisabled(false);
-          }
-        });
-      });
-    }
-    new import_obsidian4.Setting(container).setName("Show Connect Banner on Calendar Widget").setDesc("Display the banner prompt to add a Google Calendar address when no address is set.").addToggle((toggle) => {
-      toggle.setValue(this.plugin.settings.showGoogleCalendarBanner ?? true).onChange(async (val) => {
-        this.plugin.settings.showGoogleCalendarBanner = val;
-        await this.plugin.saveSettings();
-      });
-    });
-    new import_obsidian4.Setting(container).setName("Auto-sync Events in Background").setDesc("Automatically refresh events from Google Calendar every few minutes.").addToggle((toggle) => {
-      toggle.setValue(this.plugin.settings.googleCalendarAutoSync ?? true).onChange(async (val) => {
-        this.plugin.settings.googleCalendarAutoSync = val;
-        await this.plugin.saveSettings();
-      });
-    });
-    new import_obsidian4.Setting(container).setName("Event Reminders & Notifications").setDesc("Trigger an in-app notice and desktop notification before an event begins.").addToggle((toggle) => {
-      toggle.setValue(this.plugin.settings.enableCalendarNotifications ?? true).onChange(async (val) => {
-        this.plugin.settings.enableCalendarNotifications = val;
-        await this.plugin.saveSettings();
-      });
-    });
-    new import_obsidian4.Setting(container).setName("Notification Lead Time").setDesc("How many minutes before an event starts to notify you.").addDropdown((dd) => {
-      dd.addOption("5", "5 minutes before").addOption("10", "10 minutes before (Default)").addOption("15", "15 minutes before").addOption("30", "30 minutes before").setValue(String(this.plugin.settings.calendarNotificationLeadMinutes || 10)).onChange(async (val) => {
-        this.plugin.settings.calendarNotificationLeadMinutes = parseInt(val, 10) || 10;
-        await this.plugin.saveSettings();
-      });
-    });
-    container.createEl("h3", { text: "Right Rail Quote Content" });
-    new import_obsidian4.Setting(container).setName("Quote Text").setDesc("Inspirational quote displayed in the right rail widget.").addTextArea((text) => {
-      text.setPlaceholder("Consistency is more important than intensity.").setValue(this.plugin.settings.rightRailQuote).onChange(async (val) => {
-        this.plugin.settings.rightRailQuote = val;
-        await this.plugin.saveSettings();
-      });
-    });
-    new import_obsidian4.Setting(container).setName("Quote Author (Optional)").setDesc("Author name or source.").addText((text) => {
-      text.setPlaceholder("e.g. Bruce Lee").setValue(this.plugin.settings.rightRailQuoteAuthor || "").onChange(async (val) => {
-        this.plugin.settings.rightRailQuoteAuthor = val;
-        await this.plugin.saveSettings();
-      });
     });
   }
 };
@@ -3507,6 +3717,275 @@ var CalendarService = class {
   }
 };
 
+// src/services/deadlineService.ts
+var _DeadlineService = class _DeadlineService {
+  constructor(app, iconService) {
+    this.app = app;
+    this.iconService = iconService;
+  }
+  /**
+   * Safely parses any date value into a moment object.
+   * Handles Date objects, timestamps, strings, Obsidian wikilinks ([[YYYY-MM-DD]]), and YAML arrays.
+   */
+  parseDeadlineDate(rawVal) {
+    if (rawVal === void 0 || rawVal === null) return null;
+    if (Array.isArray(rawVal)) {
+      rawVal = rawVal[0];
+    }
+    if (rawVal === void 0 || rawVal === null) return null;
+    const momentFn = window.moment || moment;
+    if (Object.prototype.toString.call(rawVal) === "[object Date]" || typeof rawVal?.getMonth === "function") {
+      const m2 = momentFn(rawVal);
+      return m2 && m2.isValid() ? m2 : null;
+    }
+    if (typeof rawVal === "number") {
+      const m2 = momentFn(rawVal);
+      return m2 && m2.isValid() ? m2 : null;
+    }
+    const str = String(rawVal).replace(/[\[\]"']/g, "").trim();
+    if (!str) return null;
+    const formats = [
+      "YYYY-MM-DD",
+      "YYYY/MM/DD",
+      "YYYY.MM.DD",
+      "DD-MM-YYYY",
+      "DD/MM/YYYY",
+      "MM/DD/YYYY",
+      "YYYY-MM-DD HH:mm",
+      "YYYY-MM-DDTHH:mm:ss",
+      "YYYY-MM-DDTHH:mm:ss.SSSZ"
+    ];
+    let m = momentFn(str, formats, false);
+    if (m && m.isValid()) return m;
+    m = momentFn(str);
+    if (m && m.isValid()) return m;
+    m = momentFn(new Date(str));
+    if (m && m.isValid()) return m;
+    return null;
+  }
+  /**
+   * Scans notes for deadlines, verifies status & progress, and sorts by urgency
+   */
+  async getDeadlines(settings) {
+    let rawFolders = (settings.deadlinesFolders || "").trim();
+    if (rawFolders === "03 Projects") rawFolders = "";
+    const folderList = parseFolderList(rawFolders);
+    const deadlineProp = (settings.deadlineProp || "target_completion_date").toLowerCase().trim();
+    const completedProp = (settings.deadlineCompletedProp || "completed_date").toLowerCase().trim();
+    const statusProp = (settings.deadlineStatusProp || "status").toLowerCase().trim();
+    const completedPropAliases = Array.from(new Set([
+      completedProp,
+      "completed_date",
+      "completeddate",
+      "finished_date",
+      "finisheddate",
+      "closed_date",
+      "closeddate",
+      "done_date",
+      "donedate",
+      "completed"
+    ].map((s) => s.toLowerCase().trim())));
+    const deadlinePropAliases = Array.from(new Set([
+      deadlineProp,
+      "target_completion_date",
+      "targetcompletiondate",
+      "target_date",
+      "targetdate",
+      "target",
+      "deadline",
+      "due_date",
+      "duedate",
+      "due",
+      "end_date",
+      "enddate"
+    ].map((s) => s.toLowerCase().trim())));
+    const allFiles = this.app.vault.getMarkdownFiles();
+    const items = [];
+    const momentFn = window.moment || moment;
+    const today = momentFn().startOf("day");
+    for (const file of allFiles) {
+      if (file.path.startsWith(".")) continue;
+      if (folderList.length > 0 && !isPathInFolderList(file.path, folderList)) {
+        continue;
+      }
+      let cache = this.app.metadataCache.getFileCache(file);
+      let frontmatter = cache?.frontmatter;
+      if (!frontmatter) {
+        try {
+          const content = await this.app.vault.read(file);
+          if (content.startsWith("---")) {
+            const endIdx = content.indexOf("\n---", 3);
+            if (endIdx > 0) {
+              const yamlBlock = content.slice(3, endIdx);
+              frontmatter = {};
+              const lines = yamlBlock.split("\n");
+              for (const line of lines) {
+                const colonIdx = line.indexOf(":");
+                if (colonIdx > 0) {
+                  const k = line.slice(0, colonIdx).trim();
+                  const v = line.slice(colonIdx + 1).trim();
+                  if (k) frontmatter[k] = v;
+                }
+              }
+            }
+          }
+        } catch {
+        }
+      }
+      if (!frontmatter) continue;
+      let rawDeadlineVal = null;
+      let matchedDeadlineKey = "";
+      for (const [key, val] of Object.entries(frontmatter)) {
+        const k = key.toLowerCase().trim();
+        const kClean = k.replace(/[-_ ]/g, "");
+        const isMatch = deadlinePropAliases.some((alias) => {
+          const aClean = alias.replace(/[-_ ]/g, "");
+          return k === alias || kClean === aClean;
+        });
+        if (isMatch && val !== void 0 && val !== null && String(val).trim() !== "") {
+          rawDeadlineVal = val;
+          matchedDeadlineKey = key;
+          break;
+        }
+      }
+      if (rawDeadlineVal === void 0 || rawDeadlineVal === null) continue;
+      const mDate = this.parseDeadlineDate(rawDeadlineVal);
+      if (!mDate || !mDate.isValid()) continue;
+      const strDeadline = mDate.format("YYYY-MM-DD");
+      let isCompleted = false;
+      for (const [key, val] of Object.entries(frontmatter)) {
+        if (key === matchedDeadlineKey) continue;
+        const cleanKey = key.toLowerCase().trim().replace(/[-_ ]/g, "");
+        const isCompletedKey = completedPropAliases.some((alias) => {
+          const aClean = alias.replace(/[-_ ]/g, "");
+          return cleanKey === alias || cleanKey === aClean;
+        });
+        if (isCompletedKey && val !== void 0 && val !== null) {
+          const strVal = String(val).trim().toLowerCase();
+          if (strVal !== "" && strVal !== "false" && strVal !== "null" && strVal !== "undefined") {
+            isCompleted = true;
+            break;
+          }
+        }
+      }
+      if (isCompleted) continue;
+      let fileStatus = "";
+      for (const [key, val] of Object.entries(frontmatter)) {
+        const cleanKey = key.toLowerCase().trim().replace(/[-_ ]/g, "");
+        if (cleanKey === statusProp.replace(/[-_ ]/g, "") && val !== void 0 && val !== null) {
+          fileStatus = String(val).trim();
+          break;
+        }
+      }
+      const targetDay = mDate.clone().startOf("day");
+      const daysLeft = targetDay.diff(today, "days");
+      const isOverdue = daysLeft < 0;
+      const isToday = daysLeft === 0;
+      let startMoment = null;
+      const startAliases = ["start_date", "start", "started", "startdate", "created", "created_date", "date"];
+      for (const [key, val] of Object.entries(frontmatter)) {
+        const cleanK = key.toLowerCase().trim().replace(/[-_ ]/g, "");
+        if (startAliases.some((a) => a.replace(/[-_ ]/g, "") === cleanK) && val) {
+          startMoment = this.parseDeadlineDate(val);
+          if (startMoment && startMoment.isValid()) break;
+        }
+      }
+      if (!startMoment || !startMoment.isValid()) {
+        if (file.stat?.ctime) {
+          startMoment = momentFn(file.stat.ctime).startOf("day");
+        } else {
+          startMoment = targetDay.clone().subtract(14, "days");
+        }
+      }
+      const totalDays = targetDay.diff(startMoment, "days");
+      let timeProgress = 0;
+      if (isOverdue || isToday) {
+        timeProgress = 100;
+      } else if (totalDays <= 0) {
+        timeProgress = 100;
+      } else {
+        const elapsedDays = today.diff(startMoment, "days");
+        if (elapsedDays <= 0) {
+          timeProgress = 0;
+        } else {
+          timeProgress = Math.min(100, Math.max(0, Math.round(elapsedDays / totalDays * 100)));
+        }
+      }
+      let formattedTimeLeft = "";
+      let fullTimeDescription = "";
+      if (isOverdue) {
+        const absDays = Math.abs(daysLeft);
+        if (absDays === 1) {
+          formattedTimeLeft = "-1d";
+          fullTimeDescription = `Overdue by 1 day (Target: ${mDate.format("MMM D, YYYY")})`;
+        } else if (absDays < 14) {
+          formattedTimeLeft = `-${absDays}d`;
+          fullTimeDescription = `Overdue by ${absDays} days (Target: ${mDate.format("MMM D, YYYY")})`;
+        } else if (absDays < 60) {
+          const weeks = Math.floor(absDays / 7);
+          formattedTimeLeft = `-${weeks}w`;
+          fullTimeDescription = `Overdue by ${weeks} weeks (Target: ${mDate.format("MMM D, YYYY")})`;
+        } else {
+          const months = Math.floor(absDays / 30);
+          formattedTimeLeft = `-${months}m`;
+          fullTimeDescription = `Overdue by ${months} months (Target: ${mDate.format("MMM D, YYYY")})`;
+        }
+      } else if (isToday) {
+        formattedTimeLeft = "Today";
+        fullTimeDescription = `Due today (${mDate.format("MMM D, YYYY")})`;
+      } else if (daysLeft === 1) {
+        formattedTimeLeft = "1d";
+        fullTimeDescription = `Due tomorrow (${mDate.format("MMM D, YYYY")})`;
+      } else if (daysLeft < 14) {
+        formattedTimeLeft = `${daysLeft}d`;
+        fullTimeDescription = `${daysLeft} days remaining (Target: ${mDate.format("MMM D, YYYY")})`;
+      } else if (daysLeft < 60) {
+        const weeks = Math.round(daysLeft / 7);
+        formattedTimeLeft = `${weeks}w`;
+        fullTimeDescription = `${weeks} weeks remaining (Target: ${mDate.format("MMM D, YYYY")})`;
+      } else {
+        const months = Math.round(daysLeft / 30);
+        formattedTimeLeft = `${months}m`;
+        fullTimeDescription = `${months} months remaining (Target: ${mDate.format("MMM D, YYYY")})`;
+      }
+      const folderIcon = this.iconService.resolveFileFolderIcon(file, settings);
+      items.push({
+        title: file.basename,
+        file,
+        deadlineDate: strDeadline,
+        daysLeft,
+        isOverdue,
+        isToday,
+        formattedTimeLeft,
+        fullTimeDescription,
+        status: fileStatus,
+        timeProgress,
+        resolvedIcon: folderIcon,
+        colorHex: folderIcon.color || _DeadlineService.DEADLINE_COLORS[items.length % _DeadlineService.DEADLINE_COLORS.length]
+      });
+    }
+    items.sort((a, b) => a.daysLeft - b.daysLeft);
+    return items;
+  }
+};
+_DeadlineService.DEADLINE_COLORS = [
+  "#ef4444",
+  // Red
+  "#f97316",
+  // Orange
+  "#f59e0b",
+  // Amber
+  "#3b82f6",
+  // Blue
+  "#8b5cf6",
+  // Purple
+  "#14b8a6",
+  // Teal
+  "#ec4899"
+  // Pink
+];
+var DeadlineService = _DeadlineService;
+
 // src/modals/scheduleTaskModal.ts
 var import_obsidian7 = require("obsidian");
 var ScheduleTaskModal = class extends import_obsidian7.Modal {
@@ -4833,7 +5312,7 @@ var GoogleCalendarAddressModal = class extends import_obsidian15.Modal {
 
 // src/view/renderer.ts
 var DashboardRenderer = class extends import_obsidian16.Component {
-  constructor(app, settings, navigationService, taskService, recentNotesService, quickCaptureService, projectService, quoteService, iconService, streakService, calendarService, onSaveSettings) {
+  constructor(app, settings, navigationService, taskService, recentNotesService, quickCaptureService, projectService, quoteService, iconService, streakService, calendarService, deadlineService, onSaveSettings) {
     super();
     this.rootContainerEl = null;
     this.clockInterval = null;
@@ -4856,6 +5335,7 @@ var DashboardRenderer = class extends import_obsidian16.Component {
     this.iconService = iconService;
     this.streakService = streakService || new StreakService(app);
     this.calendarService = calendarService || new CalendarService(app);
+    this.deadlineService = deadlineService || new DeadlineService(app, this.iconService);
     this.onSaveSettings = onSaveSettings;
   }
   updateSettings(settings) {
@@ -4951,7 +5431,7 @@ var DashboardRenderer = class extends import_obsidian16.Component {
       await this.renderNavigationRibbon(mainEl);
     }
     const layout = this.getResolvedLayout();
-    const isMobileView = import_obsidian16.Platform.isMobile || import_obsidian16.Platform.isPhone || container.clientWidth > 0 && container.clientWidth < 850;
+    const isMobileView = import_obsidian16.Platform.isMobile || import_obsidian16.Platform.isPhone || container.clientWidth > 0 && container.clientWidth < 500;
     if (isMobileView) {
       await this.renderMobileWidgets(mainEl, layout);
     } else {
@@ -4967,7 +5447,7 @@ var DashboardRenderer = class extends import_obsidian16.Component {
         for (const entry of entries) {
           const w = entry.contentRect.width;
           if (w > 0) {
-            const nowMobile = w < 850;
+            const nowMobile = w < 500;
             if (nowMobile !== lastWasMobile) {
               lastWasMobile = nowMobile;
               this.render(container);
@@ -4980,12 +5460,14 @@ var DashboardRenderer = class extends import_obsidian16.Component {
   }
   renderHero(container) {
     const heroEl = container.createDiv({ cls: "os-dashboard-hero" });
-    let bannerUrl = "";
-    if (this.settings.bannerPath) {
-      if (this.settings.bannerPath.startsWith("http://") || this.settings.bannerPath.startsWith("https://")) {
-        bannerUrl = this.settings.bannerPath;
+    const DEFAULT_BANNER = "https://images.unsplash.com/photo-1519681393784-d120267933ba?auto=format&fit=crop&w=1920&q=80";
+    let bannerUrl = DEFAULT_BANNER;
+    const customPath = (this.settings.bannerPath || "").trim();
+    if (customPath) {
+      if (customPath.startsWith("http://") || customPath.startsWith("https://")) {
+        bannerUrl = customPath;
       } else {
-        const bannerFile = this.app.vault.getAbstractFileByPath(this.settings.bannerPath);
+        const bannerFile = this.app.vault.getAbstractFileByPath(customPath);
         if (bannerFile instanceof import_obsidian16.TFile) {
           bannerUrl = this.app.vault.getResourcePath(bannerFile);
         }
@@ -5173,7 +5655,7 @@ var DashboardRenderer = class extends import_obsidian16.Component {
     const defaultCols = {
       col1: ["todayTasks", "weeklyTasks"],
       col2: ["recentNotes", "quickCapture"],
-      col3: ["ongoingProjects", "bookmarks"],
+      col3: ["ongoingProjects", "deadlines", "bookmarks"],
       rail: ["calendar", "streaks", "graphView", "rightQuote"]
     };
     if (raw && Array.isArray(raw.rail)) {
@@ -5186,7 +5668,7 @@ var DashboardRenderer = class extends import_obsidian16.Component {
     const col1 = Array.isArray(raw.col1) ? [...raw.col1] : [...defaultCols.col1];
     const col2 = Array.isArray(raw.col2) ? [...raw.col2] : [...defaultCols.col2];
     const col3 = Array.isArray(raw.col3) ? [...raw.col3] : [...defaultCols.col3];
-    const rail = Array.isArray(raw.rail) ? [...raw.rail] : [...defaultCols.rail];
+    const rail = Array.isArray(raw.rail) && raw.rail.length > 0 ? [...raw.rail] : [...defaultCols.rail];
     const placed = /* @__PURE__ */ new Set([...col1, ...col2, ...col3, ...rail]);
     for (const id of defaultCols.col1) {
       if (!placed.has(id)) {
@@ -5229,7 +5711,11 @@ var DashboardRenderer = class extends import_obsidian16.Component {
     let renderedCount = 0;
     for (const widgetId of widgetIds) {
       const prevCount = colEl.childElementCount;
-      await this.renderSingleWidget(colEl, widgetId);
+      try {
+        await this.renderSingleWidget(colEl, widgetId);
+      } catch (err) {
+        console.error(`[OS Dashboard] Error rendering widget "${widgetId}":`, err);
+      }
       if (colEl.childElementCount > prevCount) {
         const cardEl = colEl.lastElementChild;
         this.attachDragAndDropToCard(cardEl, widgetId, colId);
@@ -5266,6 +5752,11 @@ var DashboardRenderer = class extends import_obsidian16.Component {
       case "ongoingProjects":
         if (this.settings.showOngoingProjects ?? true) {
           await this.renderOngoingProjects(container);
+        }
+        break;
+      case "deadlines":
+        if (this.settings.showDeadlines ?? true) {
+          await this.renderDeadlinesWidget(container);
         }
         break;
       case "bookmarks":
@@ -5433,7 +5924,11 @@ var DashboardRenderer = class extends import_obsidian16.Component {
     if (finalColor) {
       iconEl.style.color = finalColor;
       const svg = iconEl.querySelector("svg");
-      if (svg) svg.style.stroke = finalColor;
+      if (svg) {
+        svg.style.color = finalColor;
+        svg.style.stroke = finalColor;
+        svg.setAttribute("stroke", finalColor);
+      }
     }
     const titleCol = titleLeft.createDiv({ cls: "os-card-title-col" });
     titleCol.createEl("h3", { text: custom?.title || defaultTitle });
@@ -6056,6 +6551,107 @@ var DashboardRenderer = class extends import_obsidian16.Component {
       right.createSpan({ cls: "os-progress-label", text: `${proj.progress}%` });
       row.addEventListener("click", () => {
         this.app.workspace.getLeaf(false).openFile(proj.file);
+      });
+    }
+  }
+  async renderDeadlinesWidget(container) {
+    const cardEl = container.createDiv({ cls: "os-dashboard-card os-card-deadlines" });
+    const header = cardEl.createDiv({ cls: "os-card-header" });
+    const titleLeft = header.createDiv({ cls: "os-card-header-left" });
+    const iconEl = titleLeft.createSpan({ cls: "os-card-icon" });
+    this.applyWidgetCustomization("deadlines", "Deadlines", "calendar-clock", titleLeft, iconEl, "#ef4444");
+    const listEl = cardEl.createDiv({ cls: "os-deadline-list" });
+    const deadlines = await this.deadlineService.getDeadlines(this.settings);
+    if (deadlines.length === 0) {
+      listEl.createDiv({
+        cls: "os-empty-placeholder",
+        text: "No active deadlines found. Add 'deadline: YYYY-MM-DD' to notes in configured folders."
+      });
+      return;
+    }
+    for (const item of deadlines) {
+      const row = listEl.createDiv({ cls: `os-deadline-row ${item.isOverdue ? "is-overdue" : ""}` });
+      row.setAttribute("title", `${item.title} \u2022 ${item.fullTimeDescription || item.formattedTimeLeft}`);
+      const left = row.createDiv({ cls: "os-deadline-left" });
+      const iconWrap = left.createSpan({ cls: "os-deadline-icon" });
+      this.iconService.renderIcon(iconWrap, item.resolvedIcon);
+      const titleGroup = left.createDiv({ cls: "os-deadline-title-group" });
+      titleGroup.createSpan({ cls: "os-deadline-title", text: item.title });
+      if (item.status) {
+        titleGroup.createSpan({ cls: "os-deadline-status-pill", text: item.status });
+      }
+      const right = row.createDiv({ cls: "os-deadline-right" });
+      let badgeCls = "os-deadline-badge";
+      if (item.isOverdue) {
+        badgeCls += " is-overdue";
+      } else if (item.isToday) {
+        badgeCls += " is-today";
+      } else if (item.daysLeft <= 3) {
+        badgeCls += " is-urgent";
+      } else if (item.daysLeft <= 7) {
+        badgeCls += " is-soon";
+      } else {
+        badgeCls += " is-normal";
+      }
+      const badge = right.createSpan({ cls: badgeCls });
+      badge.setAttribute("title", `${item.fullTimeDescription || item.formattedTimeLeft} \u2022 ${item.timeProgress}% timeline elapsed`);
+      if (item.isOverdue) {
+        const iconSpan = badge.createSpan({ cls: "os-deadline-badge-icon" });
+        (0, import_obsidian16.setIcon)(iconSpan, "alert-circle");
+      }
+      badge.createSpan({ text: item.formattedTimeLeft });
+      const circleWrap = right.createDiv({ cls: "os-deadline-circle-wrap" });
+      circleWrap.setAttribute("title", `${item.timeProgress}% timeline elapsed \u2022 ${item.fullTimeDescription || item.formattedTimeLeft}`);
+      circleWrap.setAttribute("aria-label", `${item.timeProgress}% time elapsed`);
+      let ringColor = "var(--interactive-accent, #8b5cf6)";
+      if (item.isOverdue) {
+        ringColor = "#ef4444";
+      } else if (item.isToday) {
+        ringColor = "#f97316";
+      } else if (item.daysLeft <= 3) {
+        ringColor = "#f59e0b";
+      } else if (item.daysLeft <= 7) {
+        ringColor = "#3b82f6";
+      }
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", "0 0 20 20");
+      svg.setAttribute("class", `os-deadline-circle ${item.isOverdue ? "is-overdue" : ""}`);
+      svg.setAttribute("width", "18");
+      svg.setAttribute("height", "18");
+      const bgCircle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      bgCircle.setAttribute("cx", "10");
+      bgCircle.setAttribute("cy", "10");
+      bgCircle.setAttribute("r", "7.5");
+      bgCircle.setAttribute("class", "os-deadline-circle-bg");
+      bgCircle.setAttribute("fill", "none");
+      bgCircle.setAttribute("stroke-width", "2.2");
+      const circ = 2 * Math.PI * 7.5;
+      const offset = circ - item.timeProgress / 100 * circ;
+      const fgCircle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      fgCircle.setAttribute("cx", "10");
+      fgCircle.setAttribute("cy", "10");
+      fgCircle.setAttribute("r", "7.5");
+      fgCircle.setAttribute("class", "os-deadline-circle-fg");
+      fgCircle.setAttribute("fill", "none");
+      fgCircle.setAttribute("stroke-width", "2.2");
+      fgCircle.setAttribute("stroke", ringColor);
+      fgCircle.setAttribute("stroke-dasharray", circ.toFixed(2));
+      fgCircle.setAttribute("stroke-dashoffset", offset.toFixed(2));
+      fgCircle.setAttribute("stroke-linecap", "round");
+      fgCircle.setAttribute("transform", "rotate(-90 10 10)");
+      svg.appendChild(bgCircle);
+      svg.appendChild(fgCircle);
+      if (item.isOverdue) {
+        const centerDot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        centerDot.setAttribute("cx", "10");
+        centerDot.setAttribute("cy", "10");
+        centerDot.setAttribute("r", "2");
+        centerDot.setAttribute("fill", "#ef4444");
+        svg.appendChild(centerDot);
+      }
+      circleWrap.appendChild(svg);
+      row.addEventListener("click", () => {
+        this.app.workspace.getLeaf(false).openFile(item.file);
       });
     }
   }
@@ -7024,6 +7620,7 @@ var OSDashboardView = class extends import_obsidian17.ItemView {
       this.plugin.iconService,
       this.plugin.streakService,
       this.plugin.calendarService,
+      this.plugin.deadlineService,
       () => this.plugin.saveSettings()
     );
     await this.renderer.render(this.contentEl);
@@ -7847,7 +8444,9 @@ var _ProjectService = class _ProjectService {
    * Scans project files and extracts progress percentage
    */
   async getOngoingProjects(settings) {
-    const projectsFolder = (settings.projectsFolder || "").toLowerCase().trim();
+    let rawProjectsFolder = (settings.projectsFolder || "").trim();
+    if (rawProjectsFolder === "03 Projects") rawProjectsFolder = "";
+    const folderList = parseFolderList(rawProjectsFolder);
     const statusProp = settings.projectStatusProp || "status";
     const statusValues = (settings.projectStatusValues || ["in-progress", "active", "ongoing"]).map((v) => v.toLowerCase().trim());
     const progressProp = settings.projectProgressProp || "progress";
@@ -7855,7 +8454,7 @@ var _ProjectService = class _ProjectService {
     const candidateFiles = [];
     for (const file of allFiles) {
       if (file.path.startsWith(".")) continue;
-      if (projectsFolder && !file.path.toLowerCase().startsWith(projectsFolder)) {
+      if (folderList.length > 0 && !isPathInFolderList(file.path, folderList)) {
         continue;
       }
       const cache = this.app.metadataCache.getFileCache(file);
@@ -7960,6 +8559,7 @@ var OSDashboardPlugin = class extends import_obsidian21.Plugin {
     this.recentNotesService = new RecentNotesService(this.app, this.iconService);
     this.quickCaptureService = new QuickCaptureService(this.app);
     this.projectService = new ProjectService(this.app, this.iconService);
+    this.deadlineService = new DeadlineService(this.app, this.iconService);
     this.quoteService = new QuoteService(this.app);
     this.streakService = new StreakService(this.app);
     this.calendarService = new CalendarService(this.app);
@@ -8031,6 +8631,7 @@ var OSDashboardPlugin = class extends import_obsidian21.Plugin {
         this.iconService,
         this.streakService,
         this.calendarService,
+        this.deadlineService,
         () => this.saveSettings()
       );
       await renderer.render(el);
@@ -8094,6 +8695,18 @@ var OSDashboardPlugin = class extends import_obsidian21.Plugin {
     if (this.settings.vaultTitle === "SSK_OS") {
       this.settings.vaultTitle = "";
       await this.saveData(this.settings);
+    }
+    if (this.settings.projectsFolder === "03 Projects") {
+      this.settings.projectsFolder = "";
+    }
+    if (this.settings.deadlinesFolders === "03 Projects") {
+      this.settings.deadlinesFolders = "";
+    }
+    if (!this.settings.deadlineProp || this.settings.deadlineProp === "deadline") {
+      this.settings.deadlineProp = "target_completion_date";
+    }
+    if (!this.settings.bannerPath) {
+      this.settings.bannerPath = "https://images.unsplash.com/photo-1519681393784-d120267933ba?auto=format&fit=crop&w=1920&q=80";
     }
     if (this.settings.streaks && this.settings.streaks.length === 5) {
       const isDummy = this.settings.streaks.every((s) => ["1", "2", "3", "4", "5"].includes(s.id) && [12, 8, 5, 10, 7].includes(s.currentStreak));

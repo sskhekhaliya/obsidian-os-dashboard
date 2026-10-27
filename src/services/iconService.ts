@@ -25,7 +25,9 @@ export class IconService {
     instagram: `<rect width="20" height="20" x="2" y="2" rx="5" ry="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" x2="17.51" y1="6.5" y2="6.5"/>`,
     facebook: `<path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z"/>`,
     twitter: `<path d="M22 4s-.7 2.1-2 3.4c1.6 10-9.4 17.3-18 11.6 2.2.1 4.4-.6 6-2C3 15.5.5 9.6 3 5c2.2 2.6 5.6 4.1 9 4-.9-4.2 4-6.6 7-3.8 1.1 0 3-1.2 3-1.2z"/>`,
-    x: `<path d="M4 4l11.733 16h4.267l-11.733 -16z"/><path d="M4 20l6.768 -6.768m2.46 -2.46l6.772 -6.772"/>`,
+    "x-twitter": `<path d="M4 4l11.733 16h4.267l-11.733 -16z"/><path d="M4 20l6.768 -6.768m2.46 -2.46l6.772 -6.772"/>`,
+    "brand-x": `<path d="M4 4l11.733 16h4.267l-11.733 -16z"/><path d="M4 20l6.768 -6.768m2.46 -2.46l6.772 -6.772"/>`,
+    "twitter-x": `<path d="M4 4l11.733 16h4.267l-11.733 -16z"/><path d="M4 20l6.768 -6.768m2.46 -2.46l6.772 -6.772"/>`,
     linkedin: `<path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-2-2 2 2 0 0 0-2 2v7h-4v-7a6 6 0 0 1 6-6z"/><rect width="4" height="12" x="2" y="9"/><circle cx="4" cy="4" r="2"/>`,
     reddit: `<circle cx="12" cy="12" r="10"/><circle cx="9" cy="10" r="1" fill="currentColor"/><circle cx="15" cy="10" r="1" fill="currentColor"/><path d="M9.5 15a3.5 3.5 0 0 0 5 0"/>`,
     tiktok: `<path d="M9 12a4 4 0 1 0 4 4V4a5 5 0 0 0 5 5"/>`,
@@ -44,7 +46,9 @@ export class IconService {
   }
 
   private registerCustomIcons(): void {
+    const FORBIDDEN_ICONS = new Set(["x", "cross", "close", "check", "trash", "search", "folder", "file"]);
     for (const [id, innerSvg] of Object.entries(IconService.BRAND_ICONS)) {
+      if (FORBIDDEN_ICONS.has(id.toLowerCase())) continue; // Never overwrite Obsidian core icons
       try {
         addIcon(
           id,
@@ -497,7 +501,7 @@ export class IconService {
 
     // 3. Built-in brand icon direct fallback
     const cleanName = raw.toLowerCase().replace(/^(lucide|lu|icon|brand):/i, "").trim();
-    const brandSvg = IconService.BRAND_ICONS[cleanName];
+    const brandSvg = IconService.BRAND_ICONS[cleanName] || (cleanName === "x" ? IconService.BRAND_ICONS["x-twitter"] : undefined);
     if (brandSvg) {
       el.innerHTML = `<svg viewBox="0 0 24 24" class="svg-icon" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${brandSvg}</svg>`;
       const svg = el.querySelector("svg");

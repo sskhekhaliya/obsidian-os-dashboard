@@ -2,6 +2,7 @@ import { App, Modal, Setting, Notice } from "obsidian";
 import * as obsidian from "obsidian";
 import { CalendarService } from "../services/calendarService";
 import { CalendarEventItem, OSDashboardSettings } from "../types";
+import { initModalCloseButton } from "./modalUtils";
 
 export interface GoogleCalendarAddressModalResult {
   url: string;
@@ -31,6 +32,7 @@ export class GoogleCalendarAddressModal extends Modal {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass("os-gcal-modal");
+    initModalCloseButton(this);
 
     contentEl.createEl("h2", { text: "Connect Google Calendar" });
 

@@ -1,5 +1,6 @@
 import { App, Modal, Setting, Notice } from "obsidian";
 import { CalendarEventItem, EventRecurrenceType, moment } from "../types";
+import { initModalCloseButton } from "./modalUtils";
 
 export class EventModal extends Modal {
   private event: CalendarEventItem | null;
@@ -77,6 +78,7 @@ export class EventModal extends Modal {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass("os-event-edit-modal");
+    initModalCloseButton(this);
 
     contentEl.createEl("h2", { text: this.event ? "Edit Event" : "Create New Event" });
 

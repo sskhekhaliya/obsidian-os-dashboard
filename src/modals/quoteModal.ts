@@ -1,4 +1,5 @@
 import { App, Modal, Setting, Notice } from "obsidian";
+import { initModalCloseButton } from "./modalUtils";
 
 export class QuoteModal extends Modal {
   private quote: string;
@@ -21,6 +22,7 @@ export class QuoteModal extends Modal {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass("os-quote-modal");
+    initModalCloseButton(this);
 
     contentEl.createEl("h2", { text: "Edit Quote Widget" });
 

@@ -36,6 +36,7 @@ export class DashboardRenderer extends Component {
   private streakService: StreakService;
   private calendarService: CalendarService;
   private onSaveSettings?: () => Promise<void>;
+  private onInternalWrite?: (filePath?: string) => void;
 
   private rootContainerEl: HTMLElement | null = null;
   private clockInterval: number | null = null;
@@ -62,7 +63,8 @@ export class DashboardRenderer extends Component {
     streakService?: StreakService,
     calendarService?: CalendarService,
     deadlineService?: DeadlineService,
-    onSaveSettings?: () => Promise<void>
+    onSaveSettings?: () => Promise<void>,
+    onInternalWrite?: (filePath?: string) => void
   ) {
     super();
     this.app = app;
@@ -78,6 +80,13 @@ export class DashboardRenderer extends Component {
     this.calendarService = calendarService || new CalendarService(app);
     this.deadlineService = deadlineService || new DeadlineService(app, this.iconService);
     this.onSaveSettings = onSaveSettings;
+    this.onInternalWrite = onInternalWrite;
+  }
+
+  public markInternalWrite(filePath?: string): void {
+    if (this.onInternalWrite) {
+      this.onInternalWrite(filePath);
+    }
   }
 
   public updateSettings(settings: OSDashboardSettings) {
@@ -196,14 +205,18 @@ export class DashboardRenderer extends Component {
       // Mobile: Render row-by-row interleaved widgets across columns and rail
       await this.renderMobileWidgets(mainEl, layout);
     } else {
-      // Desktop: Main Dashboard Grid (3 Columns)
-      await this.renderMainGrid(mainEl, layout);
-
-      // Right Rail Sidebar (Calendar, Graph view, Streaks, Quote)
+      // Synchronously create BOTH main grid and right side-rail elements upfront
+      // so layoutEl has both flex children in the DOM immediately.
+      // This prevents the right rail from hiding/flickering and avoids mainEl width jumps!
+      let railEl: HTMLElement | null = null;
       if (this.settings.showRightRail ?? true) {
-        const railEl = layoutEl.createDiv({ cls: "os-dashboard-side-rail" });
-        await this.renderColumnWidgets(railEl, layout.rail, "rail");
+        railEl = layoutEl.createDiv({ cls: "os-dashboard-side-rail" });
       }
+
+      await Promise.all([
+        this.renderMainGrid(mainEl, layout),
+        railEl ? this.renderColumnWidgets(railEl, layout.rail, "rail") : Promise.resolve()
+      ]);
     }
 
     if (!Platform.isMobile && !Platform.isPhone && typeof ResizeObserver !== "undefined") {
@@ -435,17 +448,17 @@ export class DashboardRenderer extends Component {
   private async renderMainGrid(container: HTMLElement, layout: DashboardWidgetLayout): Promise<void> {
     const gridEl = container.createDiv({ cls: "os-dashboard-grid" });
 
-    // Column 1
+    // Synchronously create all 3 columns upfront
     const col1 = gridEl.createDiv({ cls: "os-dashboard-col" });
-    await this.renderColumnWidgets(col1, layout.col1, "col1");
-
-    // Column 2
     const col2 = gridEl.createDiv({ cls: "os-dashboard-col" });
-    await this.renderColumnWidgets(col2, layout.col2, "col2");
-
-    // Column 3
     const col3 = gridEl.createDiv({ cls: "os-dashboard-col" });
-    await this.renderColumnWidgets(col3, layout.col3, "col3");
+
+    // Render all 3 columns in parallel
+    await Promise.all([
+      this.renderColumnWidgets(col1, layout.col1, "col1"),
+      this.renderColumnWidgets(col2, layout.col2, "col2"),
+      this.renderColumnWidgets(col3, layout.col3, "col3")
+    ]);
   }
 
   private getInterleavedWidgetList(layout: DashboardWidgetLayout): Array<{ widgetId: string; colName: string }> {
@@ -851,7 +864,7 @@ export class DashboardRenderer extends Component {
     overdueTabBtn.createSpan({ cls: "os-today-tab-count is-overdue" });
 
     // Header Right Actions (Schedule Task Button)
-    const headerRight = header.createDiv({ cls: "os-card-header-right" });
+    const headerRight = header.createDiv({ cls: "os-card-header-actions os-card-header-right" });
     const scheduleBtn = headerRight.createDiv({ cls: "os-card-header-btn" });
     setIcon(scheduleBtn, "calendar-plus");
     scheduleBtn.setAttribute("aria-label", "Schedule task for date");
@@ -876,7 +889,7 @@ export class DashboardRenderer extends Component {
       taskTabBtn.addClass("is-active");
       logTabBtn.removeClass("is-active");
       overdueTabBtn.removeClass("is-active");
-      await this.renderTodayTasksContent(bodyEl, cardEl);
+      await this.renderTodayTasksContent(bodyEl, cardEl, false);
     });
 
     logTabBtn.addEventListener("click", async () => {
@@ -885,7 +898,7 @@ export class DashboardRenderer extends Component {
       logTabBtn.addClass("is-active");
       taskTabBtn.removeClass("is-active");
       overdueTabBtn.removeClass("is-active");
-      await this.renderTodayTasksContent(bodyEl, cardEl);
+      await this.renderTodayTasksContent(bodyEl, cardEl, false);
     });
 
     overdueTabBtn.addEventListener("click", async () => {
@@ -894,25 +907,24 @@ export class DashboardRenderer extends Component {
       overdueTabBtn.addClass("is-active");
       taskTabBtn.removeClass("is-active");
       logTabBtn.removeClass("is-active");
-      await this.renderTodayTasksContent(bodyEl, cardEl);
+      await this.renderTodayTasksContent(bodyEl, cardEl, false);
     });
 
-    await this.renderTodayTasksContent(bodyEl, cardEl);
+    await this.renderTodayTasksContent(bodyEl, cardEl, true);
   }
 
-  private async renderTodayTasksContent(bodyEl: HTMLElement, cardEl: HTMLElement): Promise<void> {
-    bodyEl.empty();
-
+  private async renderTodayTasksContent(bodyEl: HTMLElement, cardEl: HTMLElement, isInitial = false): Promise<void> {
     const planFilePath = this.settings.dailyTasksFile;
     const logFilePath = this.settings.dailyLogFile || "Daily Logs.md";
     const habitsFilePath = this.settings.habitsFile || "Habits.md";
 
-    // Auto-populate active, non-frozen streak items into today's tasks
-    if (this.streakService) {
+    // Auto-populate active, non-frozen streak items into today's tasks (only on initial load to keep tab switching instantaneous)
+    if (this.streakService && isInitial) {
       const habits = await this.streakService.loadHabits(habitsFilePath, this.settings.streaks || []);
       if (this.settings.autoFreezeHabits) {
         const autoRes = this.streakService.checkAndApplyAutoFreeze(habits, this.settings.maxFreezesPerMonth || 4, true);
         if (autoRes.applied) {
+          this.markInternalWrite(habitsFilePath);
           await this.streakService.saveHabits(habitsFilePath, habits, this.settings.maxFreezesPerMonth || 4);
           for (const msg of autoRes.messages) {
             new Notice(`[OS Dashboard] ${msg}`);
@@ -953,6 +965,9 @@ export class DashboardRenderer extends Component {
       }
     }
 
+    // Clear body only after data is ready to avoid blank flicker
+    bodyEl.empty();
+
     if (this.activeTodayTab === "tasks") {
       // --- Tab 1: Task (What I had to do) ---
       const listEl = bodyEl.createDiv({ cls: "os-task-list os-plan-task-list" });
@@ -964,23 +979,48 @@ export class DashboardRenderer extends Component {
             listEl,
             task,
             async () => {
+              this.markInternalWrite(task.sourceFile);
+              if (logFilePath) this.markInternalWrite(logFilePath);
+
+              // Instantly update badge counters in the header (optimistic UI)
+              const tabButtons = cardEl.querySelectorAll(".os-today-tab-btn");
+              const tBadge = tabButtons[0]?.querySelector(".os-today-tab-count");
+              const lBadge = tabButtons[1]?.querySelector(".os-today-tab-count");
+              if (tBadge) {
+                const currentCount = parseInt(tBadge.textContent || "0", 10);
+                if (!isNaN(currentCount)) {
+                  const newCount = task.completed ? Math.max(0, currentCount - 1) : currentCount + 1;
+                  tBadge.textContent = newCount > 0 ? `${newCount}` : "✓";
+                }
+              }
+              if (lBadge && (this.settings.autoLogToDailyLog ?? true)) {
+                const currentLog = parseInt(lBadge.textContent || "0", 10);
+                if (!isNaN(currentLog)) {
+                  lBadge.textContent = `${task.completed ? currentLog + 1 : Math.max(0, currentLog - 1)}`;
+                }
+              }
+
               await this.taskService.toggleTask(task.sourceFile, task.lineNumber, {
                 autoLog: this.settings.autoLogToDailyLog ?? true,
                 logFilePath: logFilePath
               });
+
               if (this.streakService) {
                 const habits = await this.streakService.loadHabits(habitsFilePath, this.settings.streaks || []);
-                const streakUpdated = this.streakService.handleTaskToggle(task.text, !task.completed, habits);
+                const streakUpdated = this.streakService.handleTaskToggle(task.text, task.completed, habits);
                 if (streakUpdated) {
+                  this.markInternalWrite(habitsFilePath);
                   await this.streakService.saveHabits(habitsFilePath, habits, this.settings.maxFreezesPerMonth || 4);
                   this.settings.streaks = habits;
                   if (this.onSaveSettings) await this.onSaveSettings();
                   await this.refreshStreaksCard();
                 }
               }
-              await this.renderTodayTasksRefresh(cardEl);
+              // Notice: We don't wipe/re-render cardEl on task toggle because renderTaskRow already optimistically updated the DOM!
             },
             async (newText: string) => {
+              this.markInternalWrite(task.sourceFile);
+              if (logFilePath) this.markInternalWrite(logFilePath);
               await this.taskService.updateTask(task.sourceFile, task.lineNumber, newText, {
                 autoLog: this.settings.autoLogToDailyLog ?? true,
                 logFilePath: logFilePath
@@ -988,6 +1028,8 @@ export class DashboardRenderer extends Component {
               await this.renderTodayTasksRefresh(cardEl);
             },
             async () => {
+              this.markInternalWrite(task.sourceFile);
+              if (logFilePath) this.markInternalWrite(logFilePath);
               await this.taskService.deleteTask(task.sourceFile, task.lineNumber, {
                 autoLog: this.settings.autoLogToDailyLog ?? true,
                 logFilePath: logFilePath
@@ -1014,6 +1056,7 @@ export class DashboardRenderer extends Component {
         const val = planInput.value.trim();
         if (!val) return;
         planInput.value = "";
+        this.markInternalWrite(planFilePath);
         await this.taskService.addTask(planFilePath, val);
         await this.renderTodayTasksRefresh(cardEl);
       };
@@ -1043,6 +1086,8 @@ export class DashboardRenderer extends Component {
             listEl,
             task,
             async () => {
+              this.markInternalWrite(task.sourceFile);
+              this.markInternalWrite(planFilePath);
               await this.taskService.toggleTask(task.sourceFile, task.lineNumber);
               // If unchecking from Log, also uncheck in Daily Tasks
               await this.taskService.uncheckPlannedTaskMatching(planFilePath, task.text);
@@ -1050,6 +1095,7 @@ export class DashboardRenderer extends Component {
                 const habits = await this.streakService.loadHabits(habitsFilePath, this.settings.streaks || []);
                 const streakUpdated = this.streakService.handleTaskToggle(task.text, false, habits);
                 if (streakUpdated) {
+                  this.markInternalWrite(habitsFilePath);
                   await this.streakService.saveHabits(habitsFilePath, habits, this.settings.maxFreezesPerMonth || 4);
                   this.settings.streaks = habits;
                   if (this.onSaveSettings) await this.onSaveSettings();
@@ -1060,12 +1106,16 @@ export class DashboardRenderer extends Component {
             },
             async (newText: string) => {
               const oldText = task.text;
+              this.markInternalWrite(task.sourceFile);
+              this.markInternalWrite(planFilePath);
               await this.taskService.updateTask(task.sourceFile, task.lineNumber, newText);
               // Backward sync: update matching item in Daily Tasks
               await this.taskService.updatePlannedTaskMatching(planFilePath, oldText, newText);
               await this.renderTodayTasksRefresh(cardEl);
             },
             async () => {
+              this.markInternalWrite(task.sourceFile);
+              this.markInternalWrite(planFilePath);
               await this.taskService.deleteTask(task.sourceFile, task.lineNumber);
               // Backward sync: uncheck the matching item in Daily Tasks since it is no longer logged as done
               await this.taskService.uncheckPlannedTaskMatching(planFilePath, task.text);
@@ -1073,6 +1123,7 @@ export class DashboardRenderer extends Component {
                 const habits = await this.streakService.loadHabits(habitsFilePath, this.settings.streaks || []);
                 const streakUpdated = this.streakService.handleTaskToggle(task.text, false, habits);
                 if (streakUpdated) {
+                  this.markInternalWrite(habitsFilePath);
                   await this.streakService.saveHabits(habitsFilePath, habits, this.settings.maxFreezesPerMonth || 4);
                   this.settings.streaks = habits;
                   if (this.onSaveSettings) await this.onSaveSettings();
@@ -1101,6 +1152,7 @@ export class DashboardRenderer extends Component {
         const val = logInput.value.trim();
         if (!val) return;
         logInput.value = "";
+        this.markInternalWrite(logFilePath);
         await this.taskService.addLoggedItem(logFilePath, val);
         await this.renderTodayTasksRefresh(cardEl);
       };
@@ -1133,6 +1185,7 @@ export class DashboardRenderer extends Component {
           text: "Move All to Today"
         });
         moveAllBtn.addEventListener("click", async () => {
+          this.markInternalWrite(planFilePath);
           await this.taskService.moveAllOverdueToToday(planFilePath);
           this.activeTodayTab = "tasks";
           await this.renderTodayTasksRefresh(cardEl);
@@ -1152,6 +1205,9 @@ export class DashboardRenderer extends Component {
           setIcon(checkWrap, "square");
           checkWrap.addEventListener("click", async (e) => {
             e.stopPropagation();
+            setIcon(checkWrap, "check-square");
+            row.addClass("is-completed");
+            this.markInternalWrite(task.sourceFile);
             await this.taskService.toggleTask(task.sourceFile, task.lineNumber);
             await this.renderTodayTasksRefresh(cardEl);
           });
@@ -1200,6 +1256,8 @@ export class DashboardRenderer extends Component {
           });
           moveBtn.addEventListener("click", async (e) => {
             e.stopPropagation();
+            this.markInternalWrite(task.sourceFile);
+            this.markInternalWrite(planFilePath);
             await this.taskService.moveTaskToToday(task.sourceFile, task.lineNumber, task.text);
             await this.renderTodayTasksRefresh(cardEl);
           });
@@ -1209,6 +1267,7 @@ export class DashboardRenderer extends Component {
           setIcon(delBtn, "trash-2");
           delBtn.addEventListener("click", async (e) => {
             e.stopPropagation();
+            this.markInternalWrite(task.sourceFile);
             await this.taskService.deleteTask(task.sourceFile, task.lineNumber);
             await this.renderTodayTasksRefresh(cardEl);
           });
@@ -1239,8 +1298,8 @@ export class DashboardRenderer extends Component {
     } else {
       for (const task of weeklyTasks) {
         this.renderTaskRow(listEl, task, async () => {
+          this.markInternalWrite(task.sourceFile);
           await this.taskService.toggleTask(task.sourceFile, task.lineNumber);
-          await this.renderWeeklyTasksRefresh(cardEl);
         });
       }
     }
@@ -1249,16 +1308,16 @@ export class DashboardRenderer extends Component {
   private async renderWeeklyTasksRefresh(cardEl: HTMLElement): Promise<void> {
     const listEl = cardEl.querySelector(".os-task-list") as HTMLElement;
     if (!listEl) return;
-    listEl.empty();
 
     const weeklyTasks = await this.taskService.getWeeklyTasks(this.settings.weeklyTasksFile);
+    listEl.empty();
     if (weeklyTasks.length === 0) {
       listEl.createDiv({ cls: "os-empty-placeholder", text: "No weekly tasks set." });
     } else {
       for (const task of weeklyTasks) {
         this.renderTaskRow(listEl, task, async () => {
+          this.markInternalWrite(task.sourceFile);
           await this.taskService.toggleTask(task.sourceFile, task.lineNumber);
-          await this.renderWeeklyTasksRefresh(cardEl);
         });
       }
     }
@@ -1281,9 +1340,36 @@ export class DashboardRenderer extends Component {
       setIcon(checkWrap, "square");
     }
 
+    let isToggling = false;
+    const handleToggle = async () => {
+      if (isToggling) return;
+      isToggling = true;
+
+      // Optimistic visual flip (instant feedback like React)
+      const prevCompleted = task.completed;
+      task.completed = !prevCompleted;
+      row.toggleClass("is-completed", task.completed);
+      checkWrap.empty();
+      setIcon(checkWrap, task.completed ? "check-square" : "square");
+
+      try {
+        await onToggle();
+      } catch (err) {
+        // Revert on failure
+        task.completed = prevCompleted;
+        row.toggleClass("is-completed", task.completed);
+        checkWrap.empty();
+        setIcon(checkWrap, task.completed ? "check-square" : "square");
+        console.error("OS Dashboard: Failed to toggle task", err);
+        new Notice("Failed to toggle task");
+      } finally {
+        isToggling = false;
+      }
+    };
+
     checkWrap.addEventListener("click", async (e) => {
       e.stopPropagation();
-      await onToggle();
+      await handleToggle();
     });
 
     // Content container (text or edit input)
@@ -1319,7 +1405,7 @@ export class DashboardRenderer extends Component {
         return;
       }
 
-      await onToggle();
+      await handleToggle();
     });
 
     // Action buttons container (appears on row hover or touch on mobile)
@@ -1468,6 +1554,7 @@ export class DashboardRenderer extends Component {
 
     for (const note of recentNotes) {
       const row = listEl.createDiv({ cls: "os-recent-row" });
+      row.setAttribute("data-file-path", note.file.path);
 
       const left = row.createDiv({ cls: "os-recent-left" });
       const iconWrap = left.createSpan({ cls: "os-recent-icon" });
@@ -1477,8 +1564,20 @@ export class DashboardRenderer extends Component {
 
       row.createSpan({ cls: "os-recent-time", text: note.formattedTime });
 
-      row.addEventListener("click", () => {
-        this.app.workspace.getLeaf(false).openFile(note.file);
+      row.addEventListener("click", (e: MouseEvent) => {
+        const isNewLeaf = e.ctrlKey || e.metaKey || e.button === 1;
+        this.app.workspace.getLeaf(isNewLeaf).openFile(note.file);
+      });
+
+      row.addEventListener("mouseover", (e: MouseEvent) => {
+        this.app.workspace.trigger("hover-link", {
+          event: e,
+          source: "os-dashboard",
+          hoverParent: listEl,
+          targetEl: row,
+          linktext: note.file.path,
+          sourcePath: note.file.path
+        });
       });
     }
   }
@@ -1493,7 +1592,7 @@ export class DashboardRenderer extends Component {
 
     const textarea = cardEl.createEl("textarea", {
       cls: "os-capture-input",
-      placeholder: "Write something..."
+      placeholder: "Write something... (Ctrl+Enter to save)"
     });
 
     const footer = cardEl.createDiv({ cls: "os-capture-footer" });
@@ -1502,13 +1601,34 @@ export class DashboardRenderer extends Component {
     const submitCapture = async () => {
       const val = textarea.value.trim();
       if (!val) return;
+      this.markInternalWrite();
+      button.disabled = true;
+      button.setText("Saving...");
       const success = await this.quickCaptureService.capture(val, this.settings);
       if (success) {
         textarea.value = "";
+        button.setText("Captured! ✓");
+        button.addClass("is-success");
+        setTimeout(() => {
+          button.disabled = false;
+          button.setText("Capture");
+          button.removeClass("is-success");
+        }, 1200);
+      } else {
+        button.disabled = false;
+        button.setText("Capture");
       }
     };
 
     button.addEventListener("click", submitCapture);
+
+    textarea.addEventListener("keydown", async (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+        e.preventDefault();
+        e.stopPropagation();
+        await submitCapture();
+      }
+    });
   }
 
   // --- Column 3 Widgets ---
@@ -1534,6 +1654,7 @@ export class DashboardRenderer extends Component {
 
     for (const proj of projects) {
       const row = listEl.createDiv({ cls: "os-project-row" });
+      row.setAttribute("data-file-path", proj.file.path);
 
       const left = row.createDiv({ cls: "os-project-left" });
       const iconWrap = left.createSpan({ cls: "os-project-icon" });
@@ -1550,8 +1671,20 @@ export class DashboardRenderer extends Component {
 
       right.createSpan({ cls: "os-progress-label", text: `${proj.progress}%` });
 
-      row.addEventListener("click", () => {
-        this.app.workspace.getLeaf(false).openFile(proj.file);
+      row.addEventListener("click", (e: MouseEvent) => {
+        const isNewLeaf = e.ctrlKey || e.metaKey || e.button === 1;
+        this.app.workspace.getLeaf(isNewLeaf).openFile(proj.file);
+      });
+
+      row.addEventListener("mouseover", (e: MouseEvent) => {
+        this.app.workspace.trigger("hover-link", {
+          event: e,
+          source: "os-dashboard",
+          hoverParent: listEl,
+          targetEl: row,
+          linktext: proj.file.path,
+          sourcePath: proj.file.path
+        });
       });
     }
   }
@@ -1673,8 +1806,20 @@ export class DashboardRenderer extends Component {
 
       circleWrap.appendChild(svg);
 
-      row.addEventListener("click", () => {
-        this.app.workspace.getLeaf(false).openFile(item.file);
+      row.addEventListener("click", (e: MouseEvent) => {
+        const isNewLeaf = e.ctrlKey || e.metaKey || e.button === 1;
+        this.app.workspace.getLeaf(isNewLeaf).openFile(item.file);
+      });
+
+      row.addEventListener("mouseover", (e: MouseEvent) => {
+        this.app.workspace.trigger("hover-link", {
+          event: e,
+          source: "os-dashboard",
+          hoverParent: listEl,
+          targetEl: row,
+          linktext: item.file.path,
+          sourcePath: item.file.path
+        });
       });
     }
   }

@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, debounce } from "obsidian";
+import { ItemView, WorkspaceLeaf, debounce, TAbstractFile } from "obsidian";
 import type OSDashboardPlugin from "../main";
 import { DashboardRenderer } from "./renderer";
 
@@ -15,7 +15,7 @@ export class OSDashboardView extends ItemView {
 
     this.debouncedRefresh = debounce(() => {
       this.refresh();
-    }, 500, true);
+    }, 400, true);
   }
 
   public getViewType(): string {
@@ -28,6 +28,21 @@ export class OSDashboardView extends ItemView {
 
   public getIcon(): string {
     return "layout-dashboard";
+  }
+
+  private isRelevantDashboardFile(filePath: string): boolean {
+    if (!filePath) return false;
+    const s = this.plugin.settings;
+    if (filePath === s.dailyTasksFile) return true;
+    if (filePath === (s.dailyLogFile || "Daily Logs.md")) return true;
+    if (filePath === (s.habitsFile || "Habits.md")) return true;
+    if (filePath === (s.weeklyTasksFile || "Weekly Tasks.md")) return true;
+    if (filePath === (s.calendarEventsFile || "Events.md")) return true;
+    if (filePath === s.archiveHabitsFile) return true;
+    for (const cw of s.customWidgets || []) {
+      if (cw.type === "markdown-note" && cw.content && filePath === cw.content) return true;
+    }
+    return false;
   }
 
   public async onOpen(): Promise<void> {
@@ -44,15 +59,37 @@ export class OSDashboardView extends ItemView {
       this.plugin.streakService,
       this.plugin.calendarService,
       this.plugin.deadlineService,
-      () => this.plugin.saveSettings()
+      () => this.plugin.saveSettings(),
+      (filePath) => this.plugin.markInternalWrite(filePath)
     );
 
     await this.renderer.render(this.contentEl);
 
-    // Register vault change listeners for live auto-updating
-    this.registerEvent(this.app.vault.on("modify", () => this.debouncedRefresh()));
-    this.registerEvent(this.app.vault.on("create", () => this.debouncedRefresh()));
-    this.registerEvent(this.app.vault.on("delete", () => this.debouncedRefresh()));
+    // Register vault change listeners for live auto-updating (external changes only)
+    this.registerEvent(
+      this.app.vault.on("modify", (file: TAbstractFile) => {
+        if (this.plugin.isInternalWrite(file.path)) return;
+        if (this.isRelevantDashboardFile(file.path)) {
+          this.debouncedRefresh();
+        }
+      })
+    );
+    this.registerEvent(
+      this.app.vault.on("create", (file: TAbstractFile) => {
+        if (this.plugin.isInternalWrite(file.path)) return;
+        if (this.isRelevantDashboardFile(file.path)) {
+          this.debouncedRefresh();
+        }
+      })
+    );
+    this.registerEvent(
+      this.app.vault.on("delete", (file: TAbstractFile) => {
+        if (this.plugin.isInternalWrite(file.path)) return;
+        if (this.isRelevantDashboardFile(file.path)) {
+          this.debouncedRefresh();
+        }
+      })
+    );
   }
 
   public async refresh(): Promise<void> {

@@ -1,6 +1,7 @@
 import { App, Modal, setIcon, MarkdownRenderer, Component } from "obsidian";
 import { TaskService } from "../services/taskService";
 import { TaskItem, moment } from "../types";
+import { initModalCloseButton } from "./modalUtils";
 
 export class OverdueTasksModal extends Modal {
   private taskService: TaskService;
@@ -19,6 +20,7 @@ export class OverdueTasksModal extends Modal {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass("os-overdue-modal-content");
+    initModalCloseButton(this);
 
     // Intercept clicks on internal wikilinks and external links
     contentEl.addEventListener("click", async (e: MouseEvent) => {

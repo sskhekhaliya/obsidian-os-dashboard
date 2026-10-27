@@ -796,38 +796,60 @@ export class StreakService {
           if (streak.lastCompletedCycle === currentCycle && freq !== "daily") {
             continue;
           }
-          if (streak.lastCompletedDate === todayStr && freq === "daily") {
+          if (streak.lastCompletedDate === todayStr && freq === "daily" && streak.history.includes(todayStr)) {
             continue;
           }
 
-          // Check continuation: previous cycle completed, or habit currently frozen, or previous cycle was frozen
-          const isPrevFrozen = freq === "daily"
-            ? (streak.freezeHistory && streak.freezeHistory.includes(prevCycle))
-            : this.isCycleFrozen(streak, prevCycle);
-          const wasContinuation = streak.lastCompletedCycle === prevCycle || this.isFrozen(streak) || isPrevFrozen;
-          if (wasContinuation) {
-            streak.currentStreak = (streak.currentStreak || 0) + 1;
-          } else {
-            // Streak broken or fresh start: start fresh at 1 (never remove habit!)
-            streak.currentStreak = 1;
-          }
-
-          streak.lastCompletedDate = todayStr;
-          streak.lastCompletedCycle = currentCycle;
           if (!streak.history.includes(todayStr)) {
             streak.history.push(todayStr);
           }
-          if ((streak.currentStreak || 0) > (streak.bestStreak || 0)) {
-            streak.bestStreak = streak.currentStreak;
+          streak.lastCompletedDate = todayStr;
+          streak.lastCompletedCycle = currentCycle;
+
+          if (freq === "daily") {
+            // Recalculates consecutive unbroken streak accurately from history + freezes
+            this.recalculateStreak(streak);
+          } else {
+            // Check continuation for weekly/monthly/yearly
+            const isPrevCompleted = this.isCycleCompleted(streak, prevCycle) || streak.lastCompletedCycle === prevCycle;
+            const isPrevFrozen = this.isCycleFrozen(streak, prevCycle);
+            const wasContinuation = isPrevCompleted || this.isFrozen(streak) || isPrevFrozen;
+            if (wasContinuation) {
+              streak.currentStreak = (streak.currentStreak || 0) + 1;
+            } else {
+              streak.currentStreak = 1;
+            }
+            if ((streak.currentStreak || 0) > (streak.bestStreak || 0)) {
+              streak.bestStreak = streak.currentStreak;
+            }
           }
           changed = true;
         } else {
           // Uncompleted
-          if (streak.lastCompletedCycle === currentCycle || streak.lastCompletedDate === todayStr) {
+          if (streak.lastCompletedCycle === currentCycle || streak.lastCompletedDate === todayStr || streak.history.includes(todayStr)) {
             streak.history = streak.history.filter(d => d !== todayStr);
-            streak.currentStreak = Math.max(0, (streak.currentStreak || 1) - 1);
-            streak.lastCompletedDate = streak.history[streak.history.length - 1] || undefined;
-            streak.lastCompletedCycle = undefined;
+            if (freq === "daily") {
+              this.recalculateStreak(streak);
+              streak.lastCompletedDate = streak.history[streak.history.length - 1] || undefined;
+              streak.lastCompletedCycle = streak.lastCompletedDate;
+            } else {
+              streak.currentStreak = Math.max(0, (streak.currentStreak || 1) - 1);
+              const prevDate = streak.history[streak.history.length - 1];
+              streak.lastCompletedDate = prevDate || undefined;
+              if (prevDate) {
+                if (freq === "weekly") {
+                  streak.lastCompletedCycle = moment(prevDate, "YYYY-MM-DD").format("GGGG-[W]WW");
+                } else if (freq === "monthly") {
+                  streak.lastCompletedCycle = moment(prevDate, "YYYY-MM-DD").format("YYYY-MM");
+                } else if (freq === "yearly") {
+                  streak.lastCompletedCycle = moment(prevDate, "YYYY-MM-DD").format("YYYY");
+                } else {
+                  streak.lastCompletedCycle = prevDate;
+                }
+              } else {
+                streak.lastCompletedCycle = undefined;
+              }
+            }
             changed = true;
           }
         }

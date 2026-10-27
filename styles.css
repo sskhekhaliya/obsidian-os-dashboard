@@ -776,19 +776,32 @@ body.is-mobile .os-dashboard-container {
   color: #818cf8;
 }
 
-/* Header Action Button (Schedule Button) */
+/* Header Action Button (Schedule Button & Habit Add Button) */
+.os-card-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 .os-card-header-btn {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 24px;
   height: 24px;
+  min-width: 24px;
+  min-height: 24px;
+  max-width: 24px;
+  max-height: 24px;
   border-radius: 5px;
   cursor: pointer;
   color: var(--text-muted);
   background: transparent;
   border: 1px solid var(--os-card-border);
   transition: all 0.15s ease;
+  box-sizing: border-box;
+  flex-shrink: 0;
 }
 
 .os-card-header-btn:hover {
@@ -800,6 +813,11 @@ body.is-mobile .os-dashboard-container {
 .os-card-header-btn svg {
   width: 14px;
   height: 14px;
+  min-width: 14px;
+  min-height: 14px;
+  max-width: 14px;
+  max-height: 14px;
+  display: block;
 }
 
 .os-empty-placeholder {
@@ -841,6 +859,8 @@ body.is-mobile .os-dashboard-container {
   border-radius: 5px;
   padding: 1px 2px;
   height: 24px;
+  min-height: 24px;
+  max-height: 24px;
   box-sizing: border-box;
   flex: 0 0 auto;
 }
@@ -850,6 +870,8 @@ body.is-mobile .os-dashboard-container {
   align-items: center;
   justify-content: center;
   height: 20px;
+  min-height: 20px;
+  max-height: 20px;
   box-sizing: border-box;
   border-radius: 4px;
   border: none;
@@ -1115,9 +1137,21 @@ body.is-mobile .os-dashboard-container {
   font-style: italic;
 }
 
+@keyframes os-tab-fade-in {
+  from {
+    opacity: 0.35;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .os-today-tab-body {
   display: flex;
   flex-direction: column;
+  animation: os-tab-fade-in 0.18s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .os-task-list {
@@ -1136,7 +1170,7 @@ body.is-mobile .os-dashboard-container {
   padding: 4px 6px;
   border-radius: 5px;
   background: transparent;
-  transition: background 0.15s ease;
+  transition: background 0.15s ease, opacity 0.2s ease, transform 0.15s ease;
 }
 
 .os-task-row:hover {
@@ -1149,13 +1183,18 @@ body.is-mobile .os-dashboard-container {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  transition: transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.os-task-checkbox:active {
+  transform: scale(0.85);
 }
 
 .os-task-checkbox svg {
   width: 15px;
   height: 15px;
   color: var(--text-muted);
-  transition: color 0.15s ease;
+  transition: color 0.15s ease, transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 .os-task-row:hover .os-task-checkbox svg {
@@ -1164,6 +1203,7 @@ body.is-mobile .os-dashboard-container {
 
 .os-task-row.is-completed .os-task-checkbox svg {
   color: var(--interactive-accent, #a855f7);
+  transform: scale(1.06);
 }
 
 .os-today-log .os-task-row.is-completed .os-task-checkbox svg {
@@ -1187,6 +1227,7 @@ body.is-mobile .os-dashboard-container {
   overflow: hidden;
   text-overflow: ellipsis;
   line-height: 1.4;
+  transition: color 0.2s ease, opacity 0.2s ease;
 }
 
 .os-task-text p {
@@ -1211,6 +1252,7 @@ body.is-mobile .os-dashboard-container {
 .os-task-row.is-completed .os-task-text {
   text-decoration: line-through;
   color: var(--text-faint);
+  opacity: 0.65;
 }
 
 .os-task-row.is-completed .os-task-text a.internal-link,
@@ -1345,6 +1387,7 @@ body.is-phone .os-task-actions {
   gap: 3px;
   max-height: 170px;
   overflow-y: auto;
+  overflow-x: hidden !important;
 }
 
 .os-recent-row {
@@ -1354,11 +1397,14 @@ body.is-phone .os-task-actions {
   padding: 5px 6px;
   border-radius: 5px;
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: background 0.15s ease, transform 0.15s ease;
+  box-sizing: border-box;
+  max-width: calc(100% - 3px);
 }
 
 .os-recent-row:hover {
   background: var(--background-modifier-hover);
+  transform: translateX(3px);
 }
 
 .os-recent-left {
@@ -1421,6 +1467,7 @@ body.is-phone .os-task-actions {
   resize: vertical;
   line-height: 1.35;
   font-family: inherit;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .os-capture-input:focus {
@@ -1449,11 +1496,20 @@ body.is-phone .os-task-actions {
   font-size: 11.5px !important;
   font-weight: 600 !important;
   cursor: pointer !important;
-  transition: opacity 0.15s ease !important;
+  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
 }
 
 .os-capture-button:hover {
-  opacity: 0.9;
+  opacity: 0.95;
+  transform: translateY(-1px);
+}
+
+.os-capture-button:active {
+  transform: scale(0.95);
+}
+
+.os-capture-button.is-success {
+  background: #10b981 !important;
 }
 
 /* --------------------------------------------------------------------------
@@ -1465,6 +1521,7 @@ body.is-phone .os-task-actions {
   gap: 6px;
   max-height: 170px;
   overflow-y: auto;
+  overflow-x: hidden !important;
 }
 
 .os-project-row {
@@ -1474,12 +1531,15 @@ body.is-phone .os-task-actions {
   padding: 5px 6px;
   border-radius: 5px;
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: background 0.15s ease, transform 0.15s ease;
   gap: 8px;
+  box-sizing: border-box;
+  max-width: calc(100% - 3px);
 }
 
 .os-project-row:hover {
   background: var(--background-modifier-hover);
+  transform: translateX(3px);
 }
 
 .os-project-left {
@@ -1557,6 +1617,7 @@ body.is-phone .os-task-actions {
   gap: 6px;
   max-height: 220px;
   overflow-y: auto;
+  overflow-x: hidden !important;
 }
 
 .os-deadline-row {
@@ -1566,13 +1627,16 @@ body.is-phone .os-task-actions {
   padding: 6px 8px;
   border-radius: 6px;
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
   gap: 10px;
   border: 1px solid transparent;
+  box-sizing: border-box;
+  max-width: calc(100% - 3px);
 }
 
 .os-deadline-row:hover {
   background: var(--background-modifier-hover);
+  transform: translateX(3px);
 }
 
 .os-deadline-row.is-overdue {
@@ -3701,6 +3765,26 @@ body.is-phone .os-task-actions {
   height: 15px !important;
   max-width: 15px !important;
   max-height: 15px !important;
+  stroke-width: 2px !important;
+}
+
+.os-modal-close-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 5px !important;
+}
+
+.os-modal-close-btn .os-modal-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.os-modal-close-btn .os-modal-btn-icon svg {
+  width: 14px;
+  height: 14px;
+  stroke-width: 2px;
 }
 
 .modal.os-habit-modal-dialog .modal-content {

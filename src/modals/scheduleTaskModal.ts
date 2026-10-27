@@ -1,6 +1,7 @@
 import { App, Modal, Setting, Notice } from "obsidian";
 import { TaskService } from "../services/taskService";
 import { moment } from "../types";
+import { initModalCloseButton } from "./modalUtils";
 
 export class ScheduleTaskModal extends Modal {
   private taskService: TaskService;
@@ -26,6 +27,7 @@ export class ScheduleTaskModal extends Modal {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass("os-schedule-modal");
+    initModalCloseButton(this);
 
     contentEl.createEl("h2", { text: "Schedule Tasks" });
 

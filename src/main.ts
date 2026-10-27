@@ -28,6 +28,36 @@ export default class OSDashboardPlugin extends Plugin {
   public streakService!: StreakService;
   public calendarService!: CalendarService;
 
+  private internalWriteTimestamps = new Map<string, number>();
+  private lastInternalWriteTime = 0;
+
+  public markInternalWrite(filePath?: string): void {
+    const now = Date.now();
+    this.lastInternalWriteTime = now;
+    if (filePath) {
+      this.internalWriteTimestamps.set(filePath, now);
+      if (this.internalWriteTimestamps.size > 50) {
+        for (const [key, time] of this.internalWriteTimestamps) {
+          if (now - time > 10000) this.internalWriteTimestamps.delete(key);
+        }
+      }
+    }
+  }
+
+  public isInternalWrite(filePath?: string): boolean {
+    const now = Date.now();
+    if (now - this.lastInternalWriteTime < 1500) {
+      return true;
+    }
+    if (filePath && this.internalWriteTimestamps.has(filePath)) {
+      const time = this.internalWriteTimestamps.get(filePath)!;
+      if (now - time < 2000) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   public async onload(): Promise<void> {
     await this.loadSettings();
 
@@ -124,7 +154,8 @@ export default class OSDashboardPlugin extends Plugin {
         this.streakService,
         this.calendarService,
         this.deadlineService,
-        () => this.saveSettings()
+        () => this.saveSettings(),
+        (filePath) => this.markInternalWrite(filePath)
       );
       await renderer.render(el);
     });

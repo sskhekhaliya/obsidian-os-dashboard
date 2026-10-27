@@ -1,5 +1,6 @@
 import { App, Modal, Setting } from "obsidian";
 import { StreakItem } from "../types";
+import { initModalCloseButton } from "./modalUtils";
 
 export class ArchiveOrDeleteStreakModal extends Modal {
   private streak: StreakItem;
@@ -25,6 +26,7 @@ export class ArchiveOrDeleteStreakModal extends Modal {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass("os-streak-action-modal");
+    initModalCloseButton(this);
 
     contentEl.createEl("h2", { text: `Manage Habit: ${this.streak.name}` });
 

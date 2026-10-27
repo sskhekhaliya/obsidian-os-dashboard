@@ -1,6 +1,7 @@
 import { App, Modal, Setting, setIcon, Notice } from "obsidian";
 import { StreakItem } from "../types";
 import { StreakService } from "../services/streakService";
+import { initModalCloseButton } from "./modalUtils";
 
 export class FreezeStreakModal extends Modal {
   private streak: StreakItem;
@@ -27,6 +28,7 @@ export class FreezeStreakModal extends Modal {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass("os-freeze-modal");
+    initModalCloseButton(this);
 
     const header = contentEl.createDiv({ cls: "os-modal-header" });
     const iconSpan = header.createSpan({ cls: "os-modal-header-icon" });

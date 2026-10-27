@@ -1,6 +1,7 @@
 import { App, Modal, Setting, setIcon } from "obsidian";
 import { OSDashboardSettings, FolderStyleOverride } from "../types";
 import { IconService } from "../services/iconService";
+import { initModalCloseButton } from "./modalUtils";
 
 export class FolderStyleModal extends Modal {
   private folderPath: string;
@@ -38,6 +39,7 @@ export class FolderStyleModal extends Modal {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass("os-folder-style-modal");
+    initModalCloseButton(this);
 
     contentEl.createEl("h2", { text: `Folder Style: ${this.folderName}` });
     const sub = contentEl.createDiv({ cls: "os-modal-desc" });

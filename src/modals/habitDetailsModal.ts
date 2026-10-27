@@ -3,6 +3,7 @@ import { StreakItem, OSDashboardSettings, moment } from "../types";
 import { StreakService } from "../services/streakService";
 import { StreakModal } from "./streakModal";
 import { FreezeStreakModal } from "./freezeStreakModal";
+import { initModalCloseButton } from "./modalUtils";
 
 export class HabitDetailsModal extends Modal {
   private streak: StreakItem;
@@ -31,6 +32,7 @@ export class HabitDetailsModal extends Modal {
     contentEl.empty();
     this.modalEl.addClass("os-habit-modal-dialog");
     contentEl.addClass("os-habit-details-modal");
+    initModalCloseButton(this);
 
     this.renderModalContent();
   }
@@ -360,7 +362,10 @@ export class HabitDetailsModal extends Modal {
     });
 
     // Close Button
-    const closeBtn = footer.createEl("button", { text: "Close", cls: "mod-cta" });
+    const closeBtn = footer.createEl("button", { cls: "mod-cta os-modal-close-btn" });
+    const closeIcon = closeBtn.createSpan({ cls: "os-modal-btn-icon" });
+    setIcon(closeIcon, "x");
+    closeBtn.createSpan({ text: "Close" });
     closeBtn.addEventListener("click", () => {
       this.close();
     });
